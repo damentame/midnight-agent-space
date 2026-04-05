@@ -1,0 +1,110 @@
+{
+  "escalation": {
+    "on_failure": {
+      "escalate_to": "PROJECT_MANAGER",
+      "max_attempts": 1,
+      "trigger_conditions": ["ambiguous_requirements"]
+    }
+  },
+  "constraints": {
+    "allowed_actions": [
+      "read_project_document",
+      "extract_requirements",
+      "generate_task_definitions",
+      "identify_dependencies"
+    ],
+    "execution_scope": {
+      "can_modify_code": false,
+      "can_call_external_apis": false
+    },
+    "forbidden_actions": [
+      "execute_tasks",
+      "modify_code",
+      "approve_execution"
+    ]
+  },
+  "responsibilities": {
+    "primary": [
+      "interpret_project_documents",
+      "produce_serialized_project_definition",
+      "generate_detailed_task_definitions",
+      "establish_task_implementation_order"
+    ],
+    "secondary": [
+      "identify_ambiguous_requirements"
+    ]
+  },
+  "task_generation": {
+    "detail_level": "very_detailed",
+    "detail_requirements": {
+      "task_description": {
+        "min_length": 200,
+        "required_elements": [
+          "specific_objective",
+          "detailed_steps",
+          "expected_inputs",
+          "expected_outputs",
+          "acceptance_criteria",
+          "technical_specifications"
+        ]
+      },
+      "task_metadata": {
+        "required_fields": [
+          "task_id",
+          "task_name",
+          "task_type",
+          "estimated_complexity",
+          "dependencies",
+          "prerequisites",
+          "resources_needed"
+        ]
+      }
+    },
+    "implementation_order": {
+      "required": true,
+      "ordering_strategy": "logical_sequence",
+      "numbering_scheme": {
+        "format": "sequential_numeric",
+        "start_index": 1,
+        "increment": 1,
+        "required_field": "task_order_number"
+      },
+      "order_considerations": [
+        "dependency_chain",
+        "prerequisite_completion",
+        "logical_workflow",
+        "resource_availability",
+        "risk_mitigation"
+      ]
+    },
+    "task_structure": {
+      "required_format": "numbered_json_objects",
+      "object_naming": "task_{order_number}",
+      "order_field": "task_order_number",
+      "validation": {
+        "ensure_sequential_ordering": true,
+        "validate_dependency_ordering": true,
+        "check_for_gaps": true
+      }
+    }
+  },
+  "success_criteria": {
+    "required_outputs": [
+      "serialized_project",
+      "task_graph",
+      "numbered_task_definitions",
+      "task_implementation_sequence"
+    ],
+    "task_output_requirements": {
+      "all_tasks_numbered": true,
+      "tasks_in_logical_order": true,
+      "detailed_task_descriptions": true,
+      "explicit_ordering_field": "task_order_number"
+    },
+    "event_log_requirements": {
+      "log_every_action": true,
+      "require_token_usage": true
+    }
+  }
+}
+

@@ -1,0 +1,74 @@
+# Temporal with persistent storage (best practice: use this compose so workflow
+# history survives container restarts). Data is stored in named volumes:
+#   - temporal-postgres-data: workflow history, visibility, namespaces
+#   - temporal-data: server local state
+# Do not run `docker compose down -v` if you want to keep workflow history.
+services:
+  temporal-postgres:
+    image: postgres:17-alpine
+    container_name: temporal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-7714}
+      POSTGRES_DB: temporal
+    ports:
+      - "5433:5432"
+    volumes:
+      - temporal-postgres-data:/var/lib/postgresql/data
+    networks:
+      - midnightagentspace_default
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    container_name: temporal-server
+    restart: unless-stopped
+    ports:
+      - "7233:7233"  # gRPC
+      - "7234:7234"  # HTTP
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD:-7714}
+      - POSTGRES_SEEDS=temporal-postgres
+      - DBNAME=temporal
+      - VISIBILITY_DBNAME=temporal
+      - SKIP_DB_CREATE=true
+      - SKIP_DEFAULT_NAMESPACE_CREATE=true
+    volumes:
+      - temporal-data:/var/lib/temporal
+    networks:
+      - midnightagentspace_default
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    container_name: temporal-ui
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    networks:
+      - midnightagentspace_default
+    depends_on:
+      - temporal
+
+volumes:
+  temporal-data:
+  temporal-postgres-data:
+
+networks:
+  midnightagentspace_default:
+    external: true
+

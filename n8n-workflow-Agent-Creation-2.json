@@ -1,0 +1,409 @@
+{
+  "name": "Agent Creation 2",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT main.fn_spin_up_agent(\n    {{ $json.agent_id }},\n    {{ $json.project_id }}\n) AS result;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "b3f964a3-2ef9-4fc8-a6de-797974e4b50c",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "04807001-3e5c-4e8b-9dad-75384cc9ca17",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"agent_id\": 2,\n  \"project_id\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "030d06b9-e4a4-46a0-8fbe-73c9991d8b24",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cursor.com/v0/agents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer key_f765b8e7ed1e6f614245bf893f3fb643bffec27ef94b7178041b4b48fcae7082"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.request_body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        848,
+        0
+      ],
+      "id": "b564e9d8-e974-4ef2-9e19-f6c058e28bc5",
+      "name": "HTTP Request",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "agent_response",
+              "name": "agent_response",
+              "value": "={{ $json }}",
+              "type": "object"
+            },
+            {
+              "id": "project_id",
+              "name": "project_id",
+              "value": "={{ $('Edit Fields').item.json.project_id }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1072,
+        0
+      ],
+      "id": "4a3aa52d-dd98-4dea-922c-107448a4a05c",
+      "name": "Store Agent Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.item.json.result || $input.item.json;\nconst config = result.config || {};\n\n// Extract text - handle objects by stringifying them nicely\nfunction getText(field) {\n  if (!field) return 'Not specified';\n  if (typeof field === 'string') return field;\n  if (typeof field === 'object') {\n    // If object has a 'text' property, use it\n    if (field.text) return field.text;\n    // Otherwise, format the object nicely\n    return JSON.stringify(field, null, 2);\n  }\n  return String(field);\n}\n\nconst promptText = `You are a Cursor cloud agent named ${result.agent_name || 'Agent'}.\n\nYour responsibilities include:\n${getText(config.responsibilities)}\n\nConstraints:\n${getText(config.constraints)}\n\nSuccess Criteria:\n${getText(config.success_criteria)}\n\nPlease respond briefly and clearly.`;\n\nreturn [{\n  json: {\n    api_key: result.api_key,\n    agent_instance_id: result.agent_instance_id,\n    request_body: JSON.stringify({\n      model: \"gpt-4.1\",\n      prompt: { text: promptText }\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "b7757f66-a08b-4285-9e11-028f585f44b7",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        240,
+        528
+      ],
+      "id": "5a2b73f6-38ea-4ce2-ba93-5e534eb36bf1",
+      "name": "Loop Over Items",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the input - handle the nested structure from Postgres query\nconst input = $input.item.json;\n\n// Extract documents array from result.documents\nconst documents = input.result?.documents || input.documents || [];\n\n// Get agent response from Set node\nconst agentResponseNode = $('Store Agent Response');\nconst agentResponse = agentResponseNode?.item?.json?.agent_response || {};\n\n// Process each document (if multiple) or single document\nconst processedDocuments = documents.map(document => {\n  // Extract document content - prioritize raw_text_content\n  const documentContent = document.raw_text_content || \n                          (document.file_content ? \n                            Buffer.from(document.file_content, 'base64').toString('utf8') : \n                            '') ||\n                          document.content ||\n                          '';\n\n  // Build the complete HTTP request body as an object\n  const requestBody = {\n    document: {\n      document_id: document.document_id,\n      document_name: document.document_name,\n      document_type: document.document_type,\n      content: documentContent,\n      metadata: {\n        file_extension: document.file_extension || null,\n        file_mime_type: document.file_mime_type || null,\n        file_size_bytes: document.file_size_bytes || null,\n        version_number: document.version_number || null\n      },\n      agent_context: {\n        agent_id: agentResponse.id || agentResponse.agent_id || null,\n        agent_name: agentResponse.name || agentResponse.agent_name || null,\n        agent_status: agentResponse.status || agentResponse.agent_status || null\n      }\n    }\n  };\n\n  // Stringify the request body\n  const requestBodyString = JSON.stringify(requestBody);\n\n  return {\n    json: {\n      document_id: document.document_id,\n      project_id: document.project_id || input.result?.project_id || input.project_id,\n      document_name: document.document_name,\n      document_type: document.document_type,\n      serialization_payload: requestBody.document,\n      request_body_string: requestBodyString,\n      request_body: requestBody,\n      agent_response: agentResponse,\n      raw_content_length: documentContent.length\n    }\n  };\n});\n\n// Return array of documents\nreturn processedDocuments.length > 0 ? processedDocuments : [{\n  json: {\n    error: \"No documents found\",\n    input_structure: JSON.stringify(input, null, 2)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        448
+      ],
+      "id": "f8d7ed26-d913-45f5-a46b-7d1a3f7f90f1",
+      "name": "Prepare Document for Serialization"
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiResponse = $input.item.json;\nconst documentData = $('Prepare Document for Serialization').item.json;\n\n// Extract serialized data from API response\nconst serializedData = apiResponse.serialized || \n                      apiResponse.result || \n                      apiResponse.data ||\n                      apiResponse;\n\nreturn [{\n  json: {\n    document_id: documentData.document_id,\n    project_id: documentData.project_id,\n    serialized_payload: typeof serializedData === 'object' ? \n                        serializedData : \n                        JSON.parse(serializedData || '{}'),\n    api_response: apiResponse\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        448
+      ],
+      "id": "75b53009-0a71-47ab-a564-6ca0cef846a8",
+      "name": "Process Serialization Response"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL main.sp_serialize_document(\n    {{ $json.document_id }},\n    '{{ JSON.stringify($json.serialized_payload) }}'::jsonb,\n    'system'\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1136,
+        528
+      ],
+      "id": "5987382b-843d-407a-806e-58e0c9648c09",
+      "name": "Update Document with Serialization",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get input from Set node that stores agent response\nconst input = $input.item.json;\n\n// Extract data from Set node\nconst agentResponse = input.agent_response || {};\nconst projectId = input.project_id || 1;\n\n// Extract agent response details\nconst agentId = agentResponse.id || agentResponse.agent_id || null;\nconst agentStatus = agentResponse.status || agentResponse.agent_status || null;\nconst agentName = agentResponse.name || agentResponse.agent_name || null;\n\nreturn [{\n  json: {\n    project_id: projectId,\n    agent_response: agentResponse,\n    agent_id: agentId,\n    agent_status: agentStatus,\n    agent_name: agentName\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1296,
+        0
+      ],
+      "id": "f7f69abf-d525-4944-a72a-f9d2cf33d2fb",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT main.fn_get_project_documents(\n    {{ $json.project_id }}\n) AS result;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        16,
+        528
+      ],
+      "id": "24d7b4de-9c5d-4417-8db0-cd9b712438ff",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.cursor.com/v0/agents/' + $json.agent_response.id + '/documents' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer key_f765b8e7ed1e6f614245bf893f3fb643bffec27ef94b7178041b4b48fcae7082"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.request_body_string) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        448
+      ],
+      "id": "cf8afa95-1878-4327-9d75-4b8da1bacb1a",
+      "name": "HTTP Request1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Store Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Document for Serialization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Document for Serialization": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Serialization Response": {
+      "main": [
+        [
+          {
+            "node": "Update Document with Serialization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Document with Serialization": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Process Serialization Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c18740e5-aa46-433e-bde3-fff4b12a1570",
+  "meta": {
+    "instanceId": "26a35f1805e136523253210e933425c0f6a6592345a18797887824fd1dcba5ad"
+  },
+  "id": "j2SSgBuvmkbJdixk",
+  "tags": []
+}

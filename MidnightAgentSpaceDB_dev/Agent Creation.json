@@ -1,0 +1,415 @@
+{
+  "name": "Agent Creation",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT main.fn_spin_up_agent(\n    {{ $json.agent_id }},\n    {{ $json.project_id }}\n) AS result;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -176,
+        -192
+      ],
+      "id": "7c679af6-15fd-4731-9f67-f2ff53716f66",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -592,
+        -192
+      ],
+      "id": "ab350c35-1885-4a92-ac39-eb9add85433f",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"agent_id\": 2,\n  \"project_id\": 1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -384,
+        -192
+      ],
+      "id": "367330cd-4f0b-45f7-a5b1-da2ea60d7df2",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cursor.com/v0/agents",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer key_f765b8e7ed1e6f614245bf893f3fb643bffec27ef94b7178041b4b48fcae7082"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.parse($json.request_body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        272,
+        -192
+      ],
+      "id": "234e30ac-11ca-4b5c-b612-1c3fa8cfa1ab",
+      "name": "HTTP Request",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "agent_response",
+              "name": "agent_response",
+              "value": "={{ $json }}",
+              "type": "object"
+            },
+            {
+              "id": "project_id",
+              "name": "project_id",
+              "value": "={{ $('Edit Fields').item.json.project_id }}",
+              "type": "number"
+            },
+            {
+              "id": "api_key",
+              "name": "api_key",
+              "value": "={{ $('Code in JavaScript').item.json.api_key }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        496,
+        -192
+      ],
+      "id": "c536d446-8437-4d3c-bc07-d4966da3a4d4",
+      "name": "Store Agent Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.item.json.result || $input.item.json;\nconst config = result.config || {};\n\n// Extract text - handle objects by stringifying them nicely\nfunction getText(field) {\n  if (!field) return 'Not specified';\n  if (typeof field === 'string') return field;\n  if (typeof field === 'object') {\n    // If object has a 'text' property, use it\n    if (field.text) return field.text;\n    // Otherwise, format the object nicely\n    return JSON.stringify(field, null, 2);\n  }\n  return String(field);\n}\n\nconst promptText = `You are a Cursor cloud agent named ${result.agent_name || 'Agent'}.\n\nYour responsibilities include:\n${getText(config.responsibilities)}\n\nConstraints:\n${getText(config.constraints)}\n\nSuccess Criteria:\n${getText(config.success_criteria)}\n\nPlease respond with detail and clarity.`;\n\nreturn [{\n  json: {\n    api_key: result.api_key,\n    agent_instance_id: result.agent_instance_id,\n    request_body: JSON.stringify({\n      model: \"gpt-4.1\",\n      prompt: { text: promptText }\n    })\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        -192
+      ],
+      "id": "043e85b7-4144-4299-94cc-8045969b5a10",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -352,
+        352
+      ],
+      "id": "f2bfef4e-246c-4519-a657-5dad02e36289",
+      "name": "Loop Over Items",
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the input - handle the nested structure from Postgres query\nconst input = $input.item.json;\n\n// Extract documents array from result.documents\nconst documents = input.result?.documents || input.documents || [];\n\n// Get agent response from Set node\nconst agentResponseNode = $('Store Agent Response');\nconst agentResponse = agentResponseNode?.item?.json?.agent_response || {};\n\n// Process each document (if multiple) or single document\nconst processedDocuments = documents.map(document => {\n  // Extract document content - prioritize raw_text_content\n  const documentContent = document.raw_text_content || \n                          (document.file_content ? \n                            Buffer.from(document.file_content, 'base64').toString('utf8') : \n                            '') ||\n                          document.content ||\n                          '';\n\n  // Build the follow-up prompt text for the agent\n  // This instructs the agent to serialize the document according to its config\n  const promptText = `Please serialize the following document into a structured JSON object according to your configuration and capabilities.\n\nDocument Information:\n- Document ID: ${document.document_id}\n- Document Name: ${document.document_name}\n- Document Type: ${document.document_type}\n- File Extension: ${document.file_extension || 'N/A'}\n\nDocument Content:\n${documentContent.substring(0, 5000)}${documentContent.length > 5000 ? '... (truncated)' : ''}\n\nPlease provide a structured JSON serialization of this document that can be used for task execution and workflow management. Include relevant metadata, extracted information, and any structured data according to your configured responsibilities and constraints.`;\n\n  // Build the follow-up request body according to Cursor API spec\n  const followupPrompt = {\n    prompt: {\n      text: promptText\n    }\n  };\n\n  // Also keep the document data for later use\n  const documentPayload = {\n    document_id: document.document_id,\n    document_name: document.document_name,\n    document_type: document.document_type,\n    content: documentContent,\n    metadata: {\n      file_extension: document.file_extension || null,\n      file_mime_type: document.file_mime_type || null,\n      file_size_bytes: document.file_size_bytes || null,\n      version_number: document.version_number || null\n    },\n    agent_context: {\n      agent_id: agentResponse.id || agentResponse.agent_id || null,\n      agent_name: agentResponse.name || agentResponse.agent_name || null,\n      agent_status: agentResponse.status || agentResponse.agent_status || null\n    }\n  };\n\n  return {\n    json: {\n      document_id: document.document_id,\n      project_id: document.project_id || input.result?.project_id || input.project_id,\n      document_name: document.document_name,\n      document_type: document.document_type,\n      serialization_payload: documentPayload,\n      followup_prompt: followupPrompt,\n      agent_response: agentResponse,\n      raw_content_length: documentContent.length\n    }\n  };\n});\n\n// Return array of documents\nreturn processedDocuments.length > 0 ? processedDocuments : [{\n  json: {\n    error: \"No documents found\",\n    input_structure: JSON.stringify(input, null, 2)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        272
+      ],
+      "id": "dd10058f-6707-4ba0-a100-89415c52ad8b",
+      "name": "Prepare Document for Serialization"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.cursor.com/v0/agents/' + $json.agent_response.id + '/followup' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Store Agent Response').item.json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.followup_prompt }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        272
+      ],
+      "id": "serialize-document-request",
+      "name": "HTTP Request - Serialize Document"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process serialization response from agent API\nconst apiResponse = $input.item.json;\nconst documentData = $('Prepare Document for Serialization').item.json;\n\n// Extract serialized data from API response\n// The response might be in different formats depending on the API\nconst serializedData = apiResponse.result || \n                      apiResponse.data || \n                      apiResponse.response ||\n                      apiResponse.message ||\n                      apiResponse.content ||\n                      apiResponse;\n\n// If the response is a string, try to parse it\nlet parsedData;\nif (typeof serializedData === 'string') {\n  try {\n    parsedData = JSON.parse(serializedData);\n  } catch(e) {\n    parsedData = { raw_content: serializedData };\n  }\n} else {\n  parsedData = serializedData;\n}\n\n// Build enriched payload with document metadata\nconst enrichedPayload = {\n  document_id: documentData.document_id,\n  document_name: documentData.document_name,\n  document_type: documentData.document_type,\n  content: documentData.serialization_payload?.content || '',\n  serialized_data: parsedData,\n  serialized_at: new Date().toISOString(),\n  serialization_status: 'COMPLETED',\n  metadata: documentData.serialization_payload?.metadata || {},\n  agent_context: documentData.serialization_payload?.agent_context || {}\n};\n\n// Stringify the payload and escape single quotes for SQL\nconst jsonString = JSON.stringify(enrichedPayload);\n// Escape single quotes for SQL (PostgreSQL requires doubling single quotes)\nconst escapedJsonString = jsonString.replace(/'/g, \"''\");\n\nreturn [{\n  json: {\n    document_id: documentData.document_id,\n    project_id: documentData.project_id,\n    serialized_payload: enrichedPayload,\n    escaped_json_string: escapedJsonString,\n    api_response: apiResponse\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        272
+      ],
+      "id": "516f74e9-afdc-4db0-b646-b92b76e462d0",
+      "name": "Process Serialization Response"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL main.sp_serialize_document(\n    {{ $json.document_id }},\n    '{{ $json.escaped_json_string }}'::jsonb,\n    'system'\n);",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        560,
+        352
+      ],
+      "id": "8d8ff9de-65c3-4105-8b39-0f6a38b10d9c",
+      "name": "Update Document with Serialization",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get input from Set node that stores agent response\nconst input = $input.item.json;\n\n// Extract data from Set node\nconst agentResponse = input.agent_response || {};\nconst projectId = input.project_id || 1;\n\n// Extract agent response details\nconst agentId = agentResponse.id || agentResponse.agent_id || null;\nconst agentStatus = agentResponse.status || agentResponse.agent_status || null;\nconst agentName = agentResponse.name || agentResponse.agent_name || null;\n\nreturn [{\n  json: {\n    project_id: projectId,\n    agent_response: agentResponse,\n    agent_id: agentId,\n    agent_status: agentStatus,\n    agent_name: agentName\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -192
+      ],
+      "id": "f3c1ba8e-61aa-4c73-b55d-1bf5a3431065",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT main.fn_get_project_documents(\n    {{ $json.project_id }}\n) AS result;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -576,
+        352
+      ],
+      "id": "205f1979-70d4-430d-b3e6-8b790f50d6b9",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "Rhixdzz2GVde49Ir",
+          "name": "postgres_midnight_agent_space"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Store Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Prepare Document for Serialization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Document for Serialization": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request - Serialize Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request - Serialize Document": {
+      "main": [
+        [
+          {
+            "node": "Process Serialization Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Serialization Response": {
+      "main": [
+        [
+          {
+            "node": "Update Document with Serialization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Document with Serialization": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c18740e5-aa46-433e-bde3-fff4b12a1570",
+  "meta": {
+    "instanceId": "26a35f1805e136523253210e933425c0f6a6592345a18797887824fd1dcba5ad"
+  },
+  "id": "j2SSgBuvmkbJdixk",
+  "tags": []
+}

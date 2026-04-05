@@ -1,0 +1,33 @@
+# Temporal SDK
+temporalio==1.8.0
+
+# Database
+psycopg2-binary>=2.9.9
+
+# Embedding providers (choose one or more)
+openai>=1.12.0  # For OpenAI embeddings
+sentence-transformers>=2.2.0  # For local embeddings (free, recommended)
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Semantic chunking
+langchain>=0.1.10
+langchain-text-splitters>=0.0.1
+
+# Token counting
+tiktoken>=0.5.2
+
+# HTTP requests
+httpx==0.26.0
+
+# OpenAI Agents SDK (Codex / task executor agent dry run)
+openai-agents>=0.1.0
+
+# Claude Code Agent SDK (claude-code agent provider)
+claude-agent-sdk
+
+# Utilities
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+
