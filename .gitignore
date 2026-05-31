@@ -1,0 +1,16 @@
+# Generated frontend assets
+dashboard/frontend/dist/
+dashboard/frontend/node_modules/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Local runtime logs
+*.log
+*.err.log
+*.out.log
+
+# Local run output
+.agent_runs/
+.midnight/

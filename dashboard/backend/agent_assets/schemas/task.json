@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Task Result Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "changedFiles",
+    "commandsRun",
+    "testsRun",
+    "verificationStatus",
+    "acceptanceCriteriaStatus",
+    "risks",
+    "nextSteps"
+  ],
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "commandsRun": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "testsRun": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verificationStatus": {
+      "type": "string",
+      "enum": ["passed", "failed", "not_run", "partial"]
+    },
+    "acceptanceCriteriaStatus": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterion", "status", "notes"],
+        "properties": {
+          "criterion": { "type": "string", "minLength": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["met", "not_met", "partial", "not_checked"]
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "nextSteps": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

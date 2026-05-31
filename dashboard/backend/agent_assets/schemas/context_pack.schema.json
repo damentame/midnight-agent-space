@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://midnight.local/schemas/context_pack.schema.json",
+  "title": "ContextPack",
+  "type": "object",
+  "required": ["project", "documents", "tasks", "recent_changes"],
+  "properties": {
+    "project": {
+      "type": "object"
+    },
+    "project_metadata": {
+      "type": "object"
+    },
+    "documents": {
+      "type": "array"
+    },
+    "document_versions": {
+      "type": "object"
+    },
+    "tasks": {
+      "type": "array"
+    },
+    "recent_changes": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

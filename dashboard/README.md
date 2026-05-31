@@ -12,6 +12,7 @@ python -m uvicorn dashboard.backend.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 Uses `DB_*` and `TEMPORAL_*` from `temporal/.env` when present.
+Quick-run execution also uses project metadata/runtime preferences `repo_path` for repository-local worktrees and artifacts.
 
 ## Run frontend
 

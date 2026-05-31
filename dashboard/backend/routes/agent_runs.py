@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from ..config import app_config
+from ..database import DatabaseManager, get_db
+from ..services.run_service import run_service
+from ..services.runtime_check_service import runtime_check_service
+
+router = APIRouter()
+
+
+class ProjectQuickRunBody(BaseModel):
+    user_prompt: str = Field(..., min_length=1)
+    template_name: str = "quick_run_system_prompt"
+    runtime_provider: str = app_config.midnight_default_runtime
+    model: Optional[str] = None
+    include_change_history: bool = True
+    include_document_versions: bool = True
+    use_worktree: bool = True
+    execute: bool = False
+    dry_run: Optional[bool] = None
+    created_by: str = "dashboard"
+    output_schema_name: Optional[str] = None
+
+
+@router.get("/settings/runtimes")
+async def runtime_settings_check():
+    return runtime_check_service.runtime_check()
+
+
+@router.get("/projects/{project_id}/runs")
+async def list_project_runs(
+    project_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    db: DatabaseManager = Depends(get_db),
+):
+    return await run_service.list_runs(db, project_id=project_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/runs/{run_id}")
+async def get_project_run(
+    project_id: int,
+    run_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run
+
+
+@router.post("/projects/{project_id}/runs/start")
+async def start_project_run(
+    project_id: int,
+    body: ProjectQuickRunBody,
+    db: DatabaseManager = Depends(get_db),
+):
+    dry_run = body.dry_run if body.dry_run is not None else (not body.execute)
+    result = await run_service.create_quick_run_plan(
+        db,
+        project_id=project_id,
+        user_prompt=body.user_prompt,
+        template_name=body.template_name,
+        runtime_provider=body.runtime_provider,
+        model=body.model,
+        include_change_history=body.include_change_history,
+        include_document_versions=body.include_document_versions,
+        use_worktree=body.use_worktree,
+        dry_run=dry_run,
+        created_by=body.created_by,
+        output_schema_name=body.output_schema_name,
+    )
+    if not result.get("ok") and result.get("errors"):
+        raise HTTPException(status_code=400, detail=jsonable_encoder(result))
+    return result
+
+
+@router.post("/projects/{project_id}/quick-runs")
+async def start_project_quick_run(
+    project_id: int,
+    body: ProjectQuickRunBody,
+    db: DatabaseManager = Depends(get_db),
+):
+    return await start_project_run(project_id=project_id, body=body, db=db)
+
+
+@router.post("/projects/{project_id}/runs/{run_id}/cancel")
+async def cancel_project_run(
+    project_id: int,
+    run_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    result = await run_service.cancel_run(db, project_id=project_id, run_id=run_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Unable to cancel run")
+    return result
+
+
+@router.post("/projects/{project_id}/runs/{run_id}/retry")
+async def retry_project_run(
+    project_id: int,
+    run_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    result = await run_service.retry_run(db, project_id=project_id, run_id=run_id)
+    if not result.get("ok") and result.get("errors"):
+        raise HTTPException(status_code=400, detail=jsonable_encoder(result))
+    return result
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/events")
+async def list_project_run_events(
+    project_id: int,
+    run_id: int,
+    limit: int = Query(500, ge=1, le=2000),
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return await run_service.list_run_events(db, run_id=run_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/events/stream")
+async def stream_project_run_events(
+    project_id: int,
+    run_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    async def event_generator():
+        async for payload in run_service.stream_events(db, run_id=run_id):
+            yield payload
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/artifacts")
+async def list_project_run_artifacts(
+    project_id: int,
+    run_id: int,
+    limit: int = Query(200, ge=1, le=1000),
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return await run_service.list_run_artifacts(db, run_id=run_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/changes")
+async def list_project_run_git_changes(
+    project_id: int,
+    run_id: int,
+    limit: int = Query(500, ge=1, le=2000),
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return await run_service.list_run_git_changes(db, run_id=run_id, limit=limit)

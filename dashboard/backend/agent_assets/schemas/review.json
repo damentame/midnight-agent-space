@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recommendation",
+    "summary",
+    "missingAcceptanceCriteria",
+    "risks",
+    "notes",
+    "checks"
+  ],
+  "properties": {
+    "recommendation": {
+      "type": "string",
+      "enum": ["approved", "needs_changes", "failed"]
+    },
+    "summary": { "type": "string", "minLength": 1 },
+    "missingAcceptanceCriteria": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

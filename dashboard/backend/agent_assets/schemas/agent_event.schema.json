@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://midnight.local/schemas/agent_event.schema.json",
+  "title": "AgentEvent",
+  "type": "object",
+  "required": ["event_type", "event_order"],
+  "properties": {
+    "event_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_order": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "message": {
+      "type": ["string", "null"]
+    },
+    "payload": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    }
+  },
+  "additionalProperties": true
+}

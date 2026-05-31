@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from .config import app_config
 from .database import db_manager
-from .routes import documents, projects, stats, tasks, temporal_routes, workflows
+from .routes import agent_runs, agentic, documents, projects, stats, tasks, temporal_routes, workflows
 from .temporal_service import fetch_workflow_snapshot
 
 logging.basicConfig(level=logging.INFO)
@@ -49,6 +49,8 @@ app.include_router(documents.router, prefix="/api", tags=["documents"])
 app.include_router(tasks.router, prefix="/api", tags=["tasks"])
 app.include_router(workflows.router, prefix="/api", tags=["workflows"])
 app.include_router(temporal_routes.router, prefix="/api")
+app.include_router(agentic.router, prefix="/api")
+app.include_router(agent_runs.router, prefix="/api", tags=["agent-runs"])
 
 
 @app.websocket("/ws/temporal/executions/{workflow_id}")

@@ -18,6 +18,22 @@ def _load_dotenv_files() -> None:
 _load_dotenv_files()
 
 
+def _env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip() != "":
+            return value.strip()
+    return default
+
+
+def _env_int(*names: str, default: int) -> int:
+    raw = _env(*names, default=str(default))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 class DatabaseConfig:
     host: str = os.getenv("DB_HOST", "localhost")
     port: int = int(os.getenv("DB_PORT", "5434"))
@@ -60,6 +76,46 @@ class AppConfig:
             ".tsx",
         }
     )
+    workspace_root: str = os.getenv("WORKSPACE_ROOT", "")
+    codex_cli_bin: str = _env("CODEX_COMMAND", "CODEX_CLI_BIN", default="codex")
+    codex_cli_model: str = _env("CODEX_CLI_MODEL", default="gpt-4.1-mini")
+    codex_cli_timeout_seconds: int = _env_int(
+        "CODEX_DEFAULT_TIMEOUT_SECONDS",
+        "CODEX_CLI_TIMEOUT_SECONDS",
+        default=900,
+    )
+    codex_sandbox_mode: str = _env(
+        "CODEX_SANDBOX_MODE",
+        "CODEX_CLI_SANDBOX_MODE",
+        default="workspace-write",
+    )
+    codex_approval_mode: str = _env(
+        "CODEX_APPROVAL_MODE",
+        "CODEX_CLI_APPROVAL_MODE",
+        default="never",
+    )
+    midnight_worktree_base_path: str = _env(
+        "MIDNIGHT_WORKTREE_BASE_PATH",
+        "CODEX_CLI_WORKTREE_BASE_PATH",
+        default="",
+    )
+    midnight_run_artifact_path: str = _env(
+        "MIDNIGHT_RUN_ARTIFACT_PATH",
+        "CODEX_CLI_RUN_ARTIFACT_PATH",
+        default="",
+    )
+    midnight_max_concurrency: int = max(
+        1,
+        _env_int("MIDNIGHT_MAX_CONCURRENCY", "CODEX_CLI_MAX_CONCURRENCY", default=1),
+    )
+    midnight_default_runtime: str = _env(
+        "MIDNIGHT_DEFAULT_RUNTIME",
+        "CODEX_CLI_DEFAULT_RUNTIME",
+        default="codex-cli",
+    )
+    hermes_enabled: bool = os.getenv("HERMES_ENABLED", "false").lower() in ("1", "true", "yes")
+    hermes_command: str = os.getenv("HERMES_COMMAND", "hermes")
+    hermes_api_url: str = os.getenv("HERMES_API_URL", "")
 
 
 db_config = DatabaseConfig()

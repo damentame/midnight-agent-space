@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://midnight.local/schemas/quick_run_request.schema.json",
+  "title": "QuickRunRequest",
+  "type": "object",
+  "required": ["project_id", "user_prompt"],
+  "properties": {
+    "project_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "user_prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template_name": {
+      "type": "string",
+      "default": "quick_run_system_prompt"
+    },
+    "runtime_provider": {
+      "type": "string",
+      "enum": ["codex-cli", "cursor", "codex", "claude-code"],
+      "default": "codex-cli"
+    },
+    "model": {
+      "type": ["string", "null"]
+    },
+    "include_change_history": {
+      "type": "boolean",
+      "default": true
+    },
+    "include_document_versions": {
+      "type": "boolean",
+      "default": true
+    },
+    "use_worktree": {
+      "type": "boolean",
+      "default": true
+    },
+    "dry_run": {
+      "type": "boolean",
+      "default": true
+    },
+    "created_by": {
+      "type": "string",
+      "default": "dashboard"
+    }
+  },
+  "additionalProperties": false
+}
