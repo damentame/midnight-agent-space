@@ -9,18 +9,18 @@ export default function Layout() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <Link
             to="/"
-            className="heading-main text-sm sm:text-base text-orange-600 hover:text-orange-500"
+            className="ink-hover-text heading-main text-sm sm:text-base text-orange-600 hover:text-orange-500"
           >
             Midnight Agent Space
           </Link>
           <nav className="flex gap-6 text-xs sm:text-sm font-bold uppercase tracking-widest text-neutral-500">
-            <Link to="/" className="hover:text-neutral-900 transition-colors">
+            <Link to="/" className="ink-hover-text hover:text-neutral-900 transition-colors">
               Dashboard
             </Link>
-            <Link to="/projects" className="hover:text-neutral-900 transition-colors">
+            <Link to="/projects" className="ink-hover-text hover:text-neutral-900 transition-colors">
               Projects
             </Link>
-            <Link to="/workflows" className="hover:text-neutral-900 transition-colors">
+            <Link to="/workflows" className="ink-hover-text hover:text-neutral-900 transition-colors">
               Workflows
             </Link>
             <Link to="/workflows/live" className="hover:text-orange-600 transition-colors">

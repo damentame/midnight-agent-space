@@ -14,70 +14,101 @@ export default function StatInkGrainFilter() {
       <defs>
         <filter
           id="statInkGrain"
-          x="-140%"
-          y="-140%"
-          width="380%"
-          height="380%"
+          x="-70%"
+          y="-70%"
+          width="240%"
+          height="240%"
           colorInterpolationFilters="sRGB"
         >
           <feTurbulence
             type="fractalNoise"
-            baseFrequency="3.8"
+            baseFrequency="4.6"
             numOctaves="2"
             stitchTiles="stitch"
-            result="tFine"
+            seed="17"
+            result="fineNoise"
           />
           <feColorMatrix
-            in="tFine"
+            in="fineNoise"
             type="matrix"
             values="0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0 0 0 1 0"
-            result="fMono"
+            result="fineMono"
           />
           <feTurbulence
             type="fractalNoise"
-            baseFrequency="0.95"
-            numOctaves="3"
+            baseFrequency="0.72"
+            numOctaves="4"
             stitchTiles="stitch"
-            result="tWide"
+            seed="29"
+            result="wideNoise"
           />
           <feColorMatrix
-            in="tWide"
+            in="wideNoise"
             type="matrix"
             values="0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0.2126 0.7152 0.0722 0 0  0 0 0 1 0"
-            result="wMono"
+            result="wideMono"
           />
-          <feBlend in="fMono" in2="wMono" mode="multiply" result="nBlend" />
+          <feBlend in="fineMono" in2="wideMono" mode="multiply" result="inkTexture" />
           <feColorMatrix
-            in="nBlend"
+            in="inkTexture"
             type="matrix"
-            values="3.4 0 0 0 -0.45  0 3.4 0 0 -0.45  0 0 3.4 0 -0.45  0 0 0 1 0"
-            result="grain"
+            values="4.6 0 0 0 -1.05  0 4.6 0 0 -1.05  0 0 4.6 0 -1.05  0 0 0 1 0"
+            result="inkDots"
           />
 
-          {/* Shadow: smaller offset, slightly wider blur so the rim dissolves (fade) instead of cutting off */}
-          <feOffset in="SourceAlpha" dx="-4" dy="-3" result="offA" />
-          <feGaussianBlur in="offA" stdDeviation="4.8" result="spray" />
-          <feComposite in="grain" in2="spray" operator="in" result="sClip" />
-          <feComponentTransfer in="sClip" result="sThresh">
-            <feFuncR type="linear" slope="7.5" intercept="-2.2" />
-            <feFuncG type="linear" slope="7.5" intercept="-2.2" />
-            <feFuncB type="linear" slope="7.5" intercept="-2.2" />
+          <feMorphology in="SourceAlpha" operator="dilate" radius="0.7" result="inkBody" />
+          <feGaussianBlur in="inkBody" stdDeviation="2.8" result="softBloom" />
+          <feGaussianBlur in="SourceAlpha" stdDeviation="0.85" result="tightBloom" />
+          <feComposite in="inkDots" in2="softBloom" operator="in" result="softDots" />
+          <feComposite in="inkDots" in2="tightBloom" operator="in" result="tightDots" />
+          <feComposite in="inkDots" in2="SourceAlpha" operator="in" result="coreDots" />
+          <feComponentTransfer in="softDots" result="softStipple">
+            <feFuncR type="linear" slope="4.8" intercept="-2.05" />
+            <feFuncG type="linear" slope="4.8" intercept="-2.05" />
+            <feFuncB type="linear" slope="4.8" intercept="-2.05" />
+            <feFuncA type="linear" slope="0.62" intercept="-0.12" />
           </feComponentTransfer>
-          <feComposite in="sThresh" in2="spray" operator="in" result="sShape" />
+          <feComponentTransfer in="tightDots" result="tightStipple">
+            <feFuncR type="linear" slope="8.4" intercept="-2.75" />
+            <feFuncG type="linear" slope="8.4" intercept="-2.75" />
+            <feFuncB type="linear" slope="8.4" intercept="-2.75" />
+            <feFuncA type="linear" slope="2.6" intercept="-0.05" />
+          </feComponentTransfer>
+          <feComponentTransfer in="coreDots" result="coreStipple">
+            <feFuncR type="linear" slope="8.8" intercept="-2.7" />
+            <feFuncG type="linear" slope="8.8" intercept="-2.7" />
+            <feFuncB type="linear" slope="8.8" intercept="-2.7" />
+            <feFuncA type="linear" slope="4.8" intercept="0" />
+          </feComponentTransfer>
           <feColorMatrix
-            in="sShape"
+            in="softStipple"
             type="matrix"
             values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.2126 0.7152 0.0722 0 0"
-            result="sMask"
+            result="softMask"
           />
-          <feComponentTransfer in="sMask" result="sDots">
-            <feFuncA type="linear" slope="10" intercept="-3.6" />
-          </feComponentTransfer>
-          <feFlood floodColor="#000000" floodOpacity="0.38" result="black" />
-          <feComposite in="black" in2="sDots" operator="in" result="shadowDots" />
+          <feColorMatrix
+            in="tightStipple"
+            type="matrix"
+            values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.2126 0.7152 0.0722 0 0"
+            result="tightMask"
+          />
+          <feColorMatrix
+            in="coreStipple"
+            type="matrix"
+            values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.2126 0.7152 0.0722 0 0"
+            result="coreMask"
+          />
+          <feFlood floodColor="#000000" floodOpacity="0.16" result="black" />
+          <feFlood floodColor="#000000" floodOpacity="0.8" result="denseBlack" />
+          <feFlood floodColor="#000000" floodOpacity="1" result="coreBlack" />
+          <feComposite in="black" in2="softMask" operator="in" result="softInk" />
+          <feComposite in="denseBlack" in2="tightMask" operator="in" result="denseInk" />
+          <feComposite in="coreBlack" in2="coreMask" operator="in" result="coreInk" />
 
           <feMerge>
-            <feMergeNode in="shadowDots" />
+            <feMergeNode in="softInk" />
+            <feMergeNode in="denseInk" />
+            <feMergeNode in="coreInk" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>

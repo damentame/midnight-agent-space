@@ -91,5 +91,30 @@ body::before {
 .stat-number {
   @apply text-3xl font-bold tabular-nums inline-block;
   color: #000000;
+  filter: none;
+  transform-origin: center center;
+  transform: translate3d(0, 0, 0);
+  transition:
+    filter 220ms ease,
+    transform 220ms ease;
+  will-change: filter, transform;
+}
+
+.glass:hover .stat-number {
+  filter: url(#statInkGrain);
+  transform: translate3d(0, 0, 0);
+}
+
+.ink-hover-text {
+  display: inline-block;
+  transform-origin: center center;
+  filter: none;
+  transition:
+    color 180ms ease,
+    filter 220ms ease;
+  will-change: filter;
+}
+
+.ink-hover-text:hover {
   filter: url(#statInkGrain);
 }
