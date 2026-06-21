@@ -1330,6 +1330,14 @@ async def execute_task_with_agent_activity(
     """
     from temporal.utils.model_routing import resolve_executor_model
 
+    task_type = str(task.get("task_type") or "").lower()
+    if workspace_root and task_type in {"implementation", "design", "refactor"}:
+        try:
+            from temporal.utils.figma_context import stage_design_context_sync
+            stage_design_context_sync(project_id, workspace_root)
+        except Exception as e:
+            logger.warning("design context staging skipped project_id=%s: %s", project_id, e)
+
     resolved: Optional[str] = (
         model.strip()
         if model and str(model).strip()

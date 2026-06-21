@@ -1,16 +1,167 @@
 const base = "";
 
-async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${base}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+export type CliRuntimeProvider = "codex-cli" | "claude-cli" | "cursor-agent";
+export type ReviewerProvider = "codex-cli" | "claude-cli";
+
+export type CliRuntimeStatus = {
+  id: CliRuntimeProvider;
+  label: string;
+  found: boolean;
+  configured_binary: string;
+  default_model: string | null;
+};
+
+export type ModelCatalog = {
+  selection_modes: { id: string; label: string; description: string }[];
+  providers: Record<
+    string,
+    {
+      label: string;
+      optimized: { fast: string; complex: string; default: string };
+      suggested_models: string[];
+    }
+  >;
+  agent_effort_levels: string[];
+};
+
+export type FigmaSectionSummary = {
+  slug?: string;
+  name?: string;
+  node_id?: string;
+  node_count?: number;
+  has_png?: boolean;
+  section_export_document_id?: number;
+};
+
+export type FigmaImportResult = {
+  ok: boolean;
+  document_id: number;
+  document_name: string;
+  file_key: string;
+  node_id?: string | null;
+  image_document_ids: number[];
+  section_export_document_ids?: number[];
+  asset_document_ids?: number[];
+  node_count?: number;
+  preview?: string;
+  warnings?: Array<string | { severity?: string; message?: string }>;
+  extraction_version?: string;
+  extraction_status?: string;
+  sections?: FigmaSectionSummary[];
+  assets?: Array<Record<string, unknown>>;
+  tokens_summary?: { colors: number; typography: number; spacing: number };
+};
+
+export type DesignReadiness = {
+  ok: boolean;
+  required: boolean;
+  structural_ready: boolean;
+  gaps: string[];
+  sections: FigmaSectionSummary[];
+  assets: Array<Record<string, unknown>>;
+  export_count: number;
+  asset_count: number;
+  extraction_version?: string;
+  active_document_id?: number | null;
+};
+
+export type RuntimeCheck = {
+  codex_cli: Record<string, unknown>;
+  claude_cli: Record<string, unknown>;
+  cli_runtimes?: CliRuntimeStatus[];
+  cursor_agent?: Record<string, unknown>;
+  reviewer_runtime?: { default?: string; options?: string[] };
+  model_catalog?: ModelCatalog;
+  git: Record<string, unknown>;
+  workspace_root: string;
+  midnight: Record<string, unknown>;
+  hermes: Record<string, unknown>;
+  environment: Record<string, unknown>;
+};
+
+export type AgentEffort = {
+  level: string;
+  score: number;
+  rationale: string;
+  execution_complexity?: string;
+};
+
+export type ApiErrorDetail = {
+  detail: string;
+  code?: string;
+  hint?: string;
+};
+
+function parseApiErrorBody(raw: string, statusText: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return statusText;
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown; code?: string; hint?: string };
+    const detail = parsed.detail;
+    if (typeof detail === "string") {
+      const parts = [detail];
+      if (parsed.hint) parts.push(parsed.hint);
+      return parts.join(" — ");
+    }
+    if (detail && typeof detail === "object" && !Array.isArray(detail) && "detail" in detail) {
+      const structured = detail as ApiErrorDetail;
+      const parts = [structured.detail];
+      if (structured.hint) parts.push(structured.hint);
+      return parts.join(" — ");
+    }
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => (typeof item === "object" && item && "msg" in item ? String((item as { msg: unknown }).msg) : String(item)))
+        .join("; ");
+    }
+  } catch {
+    // not JSON
+  }
+  return trimmed;
+}
+
+const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
+
+async function json<T>(path: string, init?: RequestInit, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let r: Response;
+  try {
+    r = await fetch(`${base}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(
+        `Request timed out (${path}). Check that the API is running on port 8001 and Postgres is reachable.`,
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
   if (!r.ok) {
     const t = await r.text();
-    throw new Error(t || r.statusText);
+    const message = parseApiErrorBody(t, r.statusText);
+    if (r.status === 404) {
+      throw new Error(
+        `${message} (${path}). If you recently updated the dashboard, restart the API on port 8001.`,
+      );
+    }
+    if (
+      (r.status === 500 || r.status === 502 || r.status === 503) &&
+      (!t.trim() || message.toLowerCase() === "internal server error")
+    ) {
+      throw new Error(
+        `MAS API is not reachable (${path}). Start Docker Desktop, run "docker compose up -d postgres", then start the API on port 8001.`,
+      );
+    }
+    throw new Error(message);
   }
   return r.json() as Promise<T>;
 }
@@ -113,9 +264,37 @@ export type ProjectDocument = {
   file_extension?: string | null;
   file_mime_type?: string | null;
   file_size_bytes?: number | null;
+  content_kind?: string | null;
+  content_summary?: string | null;
+  user_instructions?: string | null;
+  has_file_content?: boolean | null;
   serialization_status?: string | null;
+  embedding_status?: string | null;
   version_number?: number | null;
   is_active_version?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type UploadSettings = {
+  max_size_bytes: number;
+  max_size_mb: number;
+  allowed_extensions: string[];
+};
+
+export type ProjectTask = {
+  task_id: number;
+  project_id: number;
+  agent_id?: number | null;
+  document_id?: number | null;
+  task_name?: string | null;
+  task_type?: string | null;
+  description?: string | null;
+  parameters?: Record<string, unknown> | null;
+  status?: string | null;
+  priority?: number | null;
+  task_notes?: string | null;
+  task_data?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -197,6 +376,36 @@ export type GitChange = {
   created_at?: string | null;
 };
 
+export type ProgressMilestone = {
+  index: number;
+  name: string;
+  status: "pending" | "in_progress" | "completed" | string;
+  task_count: number;
+  completed_count: number;
+  percent_target: number;
+};
+
+export type ProgressTaskSummary = {
+  task_id?: number | null;
+  task_name?: string | null;
+  milestone_name?: string | null;
+  status?: string | null;
+};
+
+export type ProjectProgress = {
+  ok: boolean;
+  project_id: number;
+  percent_complete: number;
+  total_tasks: number;
+  completed_task_count: number;
+  milestones: ProgressMilestone[];
+  completed_tasks: ProgressTaskSummary[];
+  in_progress_tasks: ProgressTaskSummary[];
+  pending_tasks: ProgressTaskSummary[];
+  risks: string[];
+  generated_at: string;
+};
+
 export type QuickRunPlan = {
   ok: boolean;
   errors: string[];
@@ -206,6 +415,65 @@ export type QuickRunPlan = {
   command: string[];
   worktree_plan: Record<string, unknown> | null;
   dry_run: boolean;
+  already_running?: boolean;
+  message?: string;
+  source_run_id?: number;
+  continue_from_task?: {
+    task_id: number;
+    task_name?: string;
+    task_index?: number | null;
+    status?: string | null;
+  };
+};
+
+export type LocalPathFolder = {
+  name: string;
+  path: string;
+  is_git_repo: boolean;
+};
+
+export type LocalPathBrowse = {
+  current_path: string;
+  parent_path: string | null;
+  home_path: string;
+  drives: string[];
+  is_git_repo: boolean;
+  git_repos: LocalPathFolder[];
+  folders: LocalPathFolder[];
+};
+
+export type WorkspacePrepareResult = {
+  ok: boolean;
+  repo_path?: string;
+  created?: boolean;
+  initialized?: boolean;
+  folder_name?: string;
+  parent_path?: string;
+  message?: string;
+  error?: string;
+  project_id?: number;
+  saved_to_project?: boolean;
+};
+
+export type CodebaseSerializeStatus = {
+  status: string;
+  phase: string;
+  message: string;
+  current: number;
+  total: number;
+  percent: number;
+  files_seen?: number;
+  files_imported?: number;
+  files_skipped?: number;
+  error?: string | null;
+  long_running?: boolean;
+  result?: {
+    ok?: boolean;
+    files_imported?: number;
+    files_skipped?: number;
+    files_discovered?: number;
+    error?: string;
+  } | null;
 };
 
 /** Browser WebSocket URL (via Vite proxy in dev). */
@@ -221,10 +489,48 @@ export function sseRunEventsUrl(projectId: number, runId: number): string {
 
 export const api = {
   stats: () => json<Stats>("/api/stats"),
+  browseLocalPaths: (path?: string) =>
+    json<LocalPathBrowse>(`/api/local-paths/browse${toQuery({ path })}`),
+  defaultWorkspaceParent: () =>
+    json<{ parent_path: string; exists: boolean }>("/api/projects/workspace/default-parent"),
+  prepareProjectWorkspace: (
+    projectId: number,
+    body: {
+      mode: "create" | "init_here" | "use_existing";
+      parent_path?: string;
+      existing_path?: string;
+      save_to_project?: boolean;
+    },
+  ) =>
+    json<WorkspacePrepareResult>(`/api/projects/${projectId}/workspace/prepare`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  startCodebaseSerialize: (projectId: number, body?: { repo_path?: string; max_files?: number }) =>
+    json<{ ok: boolean; status?: string; message?: string; error?: string }>(
+      `/api/projects/${projectId}/codebase/serialize`,
+      {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      },
+    ),
+  codebaseSerializeStatus: (projectId: number) =>
+    json<CodebaseSerializeStatus>(`/api/projects/${projectId}/codebase/serialize/status`),
   projects: (params?: { q?: string; status?: string; limit?: number; offset?: number }) =>
     json<Project[]>(`/api/projects${toQuery(params ?? {})}`),
   project: (id: number) => json<Project>(`/api/projects/${id}`),
   projectSummary: (id: number) => json<ProjectSummary>(`/api/projects/${id}/summary`),
+  batchProjectSummaries: (limit = 12) =>
+    json<{ ok: boolean; summaries: ProjectSummary[] }>(`/api/projects/batch-summaries?limit=${limit}`),
+  projectHealth: (id: number) =>
+    json<{
+      ok: boolean;
+      project_id: number;
+      latest_run?: Record<string, unknown> | null;
+      preview?: Record<string, unknown>;
+      runnable?: { ok: boolean; errors: string[]; warnings: string[] };
+      runtime_preferences?: Record<string, unknown>;
+    }>(`/api/projects/${id}/health`),
   updateProject: (id: number, body: Partial<Project>) =>
     json<Project>(`/api/projects/${id}`, {
       method: "PUT",
@@ -285,20 +591,147 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  uploadDocument: async (projectId: number, file: File) => {
+  validateFigmaToken: (token: string) =>
+    json<{ ok: boolean; email?: string; handle?: string }>("/api/settings/figma/validate-token", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  importFigmaDesign: (
+    projectId: number,
+    body: { url: string; notes?: string; token?: string },
+  ) =>
+    json<FigmaImportResult>(`/api/projects/${projectId}/figma/import`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  reimportFigmaDesign: (
+    projectId: number,
+    body: { url?: string; notes?: string; token?: string } = {},
+  ) =>
+    json<FigmaImportResult>(`/api/projects/${projectId}/figma/reimport`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  importDesignPack: async (projectId: number, file: File, notes?: string) => {
     const fd = new FormData();
     fd.append("file", file);
+    if (notes?.trim()) fd.append("notes", notes.trim());
+    const r = await fetch(`/api/projects/${projectId}/design-pack/import`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!r.ok) {
+      const raw = await r.text();
+      throw new Error(parseApiErrorBody(raw, r.statusText));
+    }
+    return r.json() as Promise<FigmaImportResult>;
+  },
+  getDesignReadiness: (projectId: number) =>
+    json<DesignReadiness>(`/api/projects/${projectId}/design-readiness`),
+  uploadSettings: () => json<UploadSettings>("/api/settings/uploads"),
+  uploadDocument: async (projectId: number, file: File, instructions?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (instructions?.trim()) fd.append("instructions", instructions.trim());
     const r = await fetch(`/api/projects/${projectId}/documents/upload`, {
       method: "POST",
       body: fd,
     });
+    if (!r.ok) {
+      const raw = await r.text();
+      let message = raw || r.statusText;
+      try {
+        const parsed = JSON.parse(raw) as { detail?: string };
+        if (typeof parsed.detail === "string") message = parsed.detail;
+      } catch {
+        // use raw response text
+      }
+      throw new Error(message);
+    }
+    return r.json() as Promise<ProjectDocument>;
+  },
+  documentFileBlob: async (projectId: number, documentId: number) => {
+    const r = await fetch(`/api/projects/${projectId}/documents/${documentId}/file`);
     if (!r.ok) throw new Error(await r.text());
-    return r.json();
+    return r.blob();
   },
   deleteDocument: (projectId: number, documentId: number) =>
-    json<{ deleted: boolean }>(
+    json<{ deleted: boolean; document_id: number }>(
       `/api/projects/${projectId}/documents/${documentId}`,
       { method: "DELETE" },
+    ),
+  deleteDocuments: (projectId: number, documentIds: number[]) =>
+    json<{ deleted: number; document_ids: number[] }>(
+      `/api/projects/${projectId}/documents/batch-delete`,
+      {
+        method: "POST",
+        body: JSON.stringify({ document_ids: documentIds }),
+      },
+    ),
+  analyzeProject: (
+    projectId: number,
+    body: {
+      goal: string;
+      repo_path?: string;
+      repository_url?: string;
+      default_branch?: string;
+      preview_command?: string;
+      preview_url?: string;
+      acceptance_criteria?: string[];
+      team?: Record<string, unknown>[];
+      execution_parameters?: Record<string, unknown>;
+      manual_edit_instructions?: string;
+    },
+  ) =>
+    json<Record<string, unknown>>(`/api/projects/${projectId}/analysis-plan`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  startProjectPreview: (projectId: number) =>
+    json<{
+      ok: boolean;
+      preview_url?: string;
+      open_url?: string;
+      command?: string;
+      error?: string;
+      auto_detected?: boolean;
+      phase?: string;
+      reachable?: boolean;
+      status_code?: number;
+      message?: string;
+      allocated_port?: number;
+      port_note?: string;
+      working_directory?: string;
+      steps?: Array<{
+        id: string;
+        label: string;
+        status: string;
+        detail?: string;
+      }>;
+    }>(`/api/projects/${projectId}/preview`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  projectPreviewStatus: (projectId: number) =>
+    json<{
+      ok: boolean;
+      phase?: string;
+      reachable?: boolean;
+      preview_url?: string | null;
+      open_url?: string;
+      final_url?: string;
+      preview_command?: string | null;
+      message?: string;
+      status_code?: number;
+      started_at?: string;
+      error?: string;
+    }>(`/api/projects/${projectId}/preview/status`),
+  projectProgress: (projectId: number) =>
+    json<ProjectProgress>(`/api/projects/${projectId}/progress`),
+  promoteProjectToMain: (projectId: number) =>
+    json<{ ok: boolean; from_branch?: string; to_branch?: string; commit_hash?: string; synced_worktree?: string | null }>(
+      `/api/projects/${projectId}/promote-to-main`,
+      { method: "POST", body: JSON.stringify({}) },
     ),
   documentVersionsV2: (projectId: number, documentId: number, limit = 50) =>
     json<DocumentVersion[]>(
@@ -325,7 +758,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  tasks: (projectId: number) => json<unknown[]>(`/api/projects/${projectId}/tasks`),
+  tasks: (projectId: number) => json<ProjectTask[]>(`/api/projects/${projectId}/tasks`),
   projectRuns: (projectId: number, limit = 100) =>
     json<AgentRun[]>(`/api/projects/${projectId}/runs?limit=${limit}`),
   projectRun: (projectId: number, runId: number) =>
@@ -337,6 +770,7 @@ export const api = {
       template_name?: string;
       runtime_provider?: string;
       model?: string;
+      model_selection_mode?: string;
       include_change_history?: boolean;
       include_document_versions?: boolean;
       use_worktree?: boolean;
@@ -356,7 +790,9 @@ export const api = {
       user_prompt: string;
       template_name?: string;
       runtime_provider?: string;
+      reviewer_provider?: string;
       model?: string;
+      model_selection_mode?: string;
       include_change_history?: boolean;
       include_document_versions?: boolean;
       use_worktree?: boolean;
@@ -375,13 +811,51 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  cleanupProjectRun: (projectId: number, runId: number, body?: { delete_record?: boolean }) =>
+    json<{
+      ok: boolean;
+      run_id: number;
+      git?: Record<string, unknown>;
+      deleted?: Record<string, number>;
+      delete_record?: boolean;
+    }>(`/api/projects/${projectId}/runs/${runId}/cleanup`, {
+      method: "POST",
+      body: JSON.stringify(body ?? { delete_record: true }),
+    }),
   retryProjectRun: (projectId: number, runId: number) =>
     json<QuickRunPlan>(`/api/projects/${projectId}/runs/${runId}/retry`, {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  projectRunEvents: (projectId: number, runId: number, limit = 500) =>
-    json<AgentEvent[]>(`/api/projects/${projectId}/runs/${runId}/events?limit=${limit}`),
+  detectProjectPreview: (projectId: number) =>
+    json<{
+      ok: boolean;
+      repo_path?: string;
+      preview_command?: string;
+      preview_url?: string;
+      framework?: string;
+      working_directory?: string;
+      detected_from?: string;
+      allocated_port?: number;
+      port_note?: string;
+      error?: string;
+    }>(`/api/projects/${projectId}/preview/detect`),
+  reconcileProjectRun: (projectId: number, runId: number) =>
+    json<{
+      ok: boolean;
+      run_id: number;
+      status?: string;
+      reconciled_tasks?: Record<number, string>;
+      already_terminal?: boolean;
+      error?: string;
+    }>(`/api/projects/${projectId}/runs/${runId}/reconcile`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  projectRunEvents: (projectId: number, runId: number, limit = 500, mode: "timeline" | "full" = "timeline") =>
+    json<AgentEvent[]>(
+      `/api/projects/${projectId}/runs/${runId}/events?limit=${limit}&mode=${mode}`,
+    ),
   projectRunArtifacts: (projectId: number, runId: number, limit = 200) =>
     json<AgentArtifact[]>(`/api/projects/${projectId}/runs/${runId}/artifacts?limit=${limit}`),
   projectRunChanges: (projectId: number, runId: number, limit = 500) =>
@@ -413,8 +887,9 @@ export const api = {
   },
   temporalTargetFromWorkflowRun: (workflowRunId: number) =>
     json<TemporalTarget>(`/api/temporal/workflow-runs/${workflowRunId}/target`),
-  settingsRuntimes: () => json<Record<string, unknown>>("/api/settings/runtimes"),
-  runtimeCheck: () => json<Record<string, unknown>>("/api/agentic/runtime/check"),
+  settingsRuntimes: () => json<RuntimeCheck>("/api/settings/runtimes"),
+  modelSettings: () => json<ModelCatalog>("/api/settings/models"),
+  runtimeCheck: () => json<RuntimeCheck>("/api/agentic/runtime/check"),
   projectMetadata: (projectId: number) =>
     json<ProjectMetadata>(`/api/agentic/projects/${projectId}/metadata`),
   updateProjectMetadata: (
@@ -449,6 +924,37 @@ export const api = {
     },
   ) =>
     json<unknown>(`/api/agentic/projects/${projectId}/documents/${documentId}/versions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  projectVersionHistory: (projectId: number) =>
+    json<{
+      ok: boolean;
+      project_id: number;
+      version_history: Array<{
+        version: number;
+        git_tag?: string | null;
+        commit_hash?: string | null;
+        reason?: string;
+        created_at?: string;
+        runs_cleaned?: number;
+        tasks_reset?: number;
+      }>;
+      refresh_events?: unknown[];
+    }>(`/api/projects/${projectId}/version-history`),
+  refreshProject: (
+    projectId: number,
+    body: { reason: string; created_by?: string },
+  ) =>
+    json<{
+      ok: boolean;
+      project_id: number;
+      version: number;
+      snapshot: Record<string, unknown>;
+      runs_cleaned: number;
+      tasks_reset: number;
+      version_history_entry: Record<string, unknown>;
+    }>(`/api/projects/${projectId}/refresh`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -494,6 +1000,7 @@ export const api = {
     template_name?: string;
     runtime_provider?: string;
     model?: string;
+    model_selection_mode?: string;
     include_change_history?: boolean;
     include_document_versions?: boolean;
     use_worktree?: boolean;

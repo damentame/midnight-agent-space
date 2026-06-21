@@ -34,8 +34,16 @@ def _env_int(*names: str, default: int) -> int:
         return default
 
 
+def _normalize_db_host(host: str) -> str:
+    """Windows often resolves localhost to ::1 while Postgres listens on IPv4 only."""
+    value = (host or "").strip() or "127.0.0.1"
+    if value.lower() in {"localhost", "::1"}:
+        return "127.0.0.1"
+    return value
+
+
 class DatabaseConfig:
-    host: str = os.getenv("DB_HOST", "localhost")
+    host: str = _normalize_db_host(os.getenv("DB_HOST", "127.0.0.1"))
     port: int = int(os.getenv("DB_PORT", "5434"))
     name: str = os.getenv("DB_NAME", "midnight_agent_space_dev")
     user: str = os.getenv("DB_USER", "postgres")
@@ -60,7 +68,11 @@ class AppConfig:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ]
-    upload_max_size: int = 50 * 1024 * 1024
+    upload_max_size: int = _env_int(
+        "UPLOAD_MAX_SIZE",
+        "MIDNIGHT_UPLOAD_MAX_SIZE",
+        default=50 * 1024 * 1024,
+    )
     allowed_extensions: frozenset = frozenset(
         {
             ".txt",
@@ -70,15 +82,26 @@ class AppConfig:
             ".xml",
             ".pdf",
             ".docx",
+            ".fig",
+            ".figma",
+            ".gif",
+            ".jpeg",
+            ".jpg",
             ".py",
+            ".png",
+            ".sketch",
             ".js",
+            ".svg",
             ".ts",
             ".tsx",
+            ".webp",
         }
     )
     workspace_root: str = os.getenv("WORKSPACE_ROOT", "")
     codex_cli_bin: str = _env("CODEX_COMMAND", "CODEX_CLI_BIN", default="codex")
-    codex_cli_model: str = _env("CODEX_CLI_MODEL", default="gpt-4.1-mini")
+    codex_cli_model: str = _env("CODEX_CLI_MODEL", default="")
+    codex_cli_model_fast: str = _env("CODEX_CLI_MODEL_FAST", default="gpt-4.1-mini")
+    codex_cli_model_complex: str = _env("CODEX_CLI_MODEL_COMPLEX", default="gpt-4.1")
     codex_cli_timeout_seconds: int = _env_int(
         "CODEX_DEFAULT_TIMEOUT_SECONDS",
         "CODEX_CLI_TIMEOUT_SECONDS",
@@ -106,16 +129,86 @@ class AppConfig:
     )
     midnight_max_concurrency: int = max(
         1,
-        _env_int("MIDNIGHT_MAX_CONCURRENCY", "CODEX_CLI_MAX_CONCURRENCY", default=1),
+        _env_int("MIDNIGHT_MAX_CONCURRENCY", "CODEX_CLI_MAX_CONCURRENCY", default=4),
+    )
+    section_task_max_parallel: int = max(
+        1,
+        _env_int("SECTION_TASK_MAX_PARALLEL", default=4),
+    )
+    parallel_cli_stagger_seconds: float = max(
+        0.0,
+        float(_env("PARALLEL_CLI_STAGGER_SECONDS", default="2.0") or 2.0),
     )
     midnight_default_runtime: str = _env(
         "MIDNIGHT_DEFAULT_RUNTIME",
         "CODEX_CLI_DEFAULT_RUNTIME",
         default="codex-cli",
     )
+    claude_cli_bin: str = _env("CLAUDE_COMMAND", "CLAUDE_CLI_BIN", default="claude")
+    claude_cli_model: str = _env("CLAUDE_CLI_MODEL", default="sonnet")
+    claude_cli_model_fast: str = _env("CLAUDE_CLI_MODEL_FAST", default="haiku")
+    claude_cli_model_complex: str = _env("CLAUDE_CLI_MODEL_COMPLEX", default="sonnet")
+    claude_cli_timeout_seconds: int = _env_int(
+        "CLAUDE_CLI_TIMEOUT_SECONDS",
+        default=900,
+    )
+    claude_permission_mode: str = _env(
+        "CLAUDE_PERMISSION_MODE",
+        "CLAUDE_CLI_PERMISSION_MODE",
+        default="acceptEdits",
+    )
+    claude_allowed_tools: str = _env(
+        "CLAUDE_ALLOWED_TOOLS",
+        "CLAUDE_CLI_ALLOWED_TOOLS",
+        default="Read,Edit,Write,Glob,Grep,Bash",
+    )
+    cursor_agent_bin: str = _env(
+        "CURSOR_AGENT_COMMAND",
+        "CURSOR_AGENT_BIN",
+        default="cursor-agent",
+    )
+    cursor_agent_model: str = _env("CURSOR_AGENT_MODEL", default="")
+    cursor_agent_model_fast: str = _env("CURSOR_AGENT_MODEL_FAST", default="")
+    cursor_agent_model_complex: str = _env("CURSOR_AGENT_MODEL_COMPLEX", default="")
+    cursor_agent_timeout_seconds: int = _env_int("CURSOR_AGENT_TIMEOUT_SECONDS", default=900)
+    midnight_reviewer_runtime: str = _env(
+        "MIDNIGHT_REVIEWER_RUNTIME",
+        default="claude-cli",
+    )
     hermes_enabled: bool = os.getenv("HERMES_ENABLED", "false").lower() in ("1", "true", "yes")
     hermes_command: str = os.getenv("HERMES_COMMAND", "hermes")
     hermes_api_url: str = os.getenv("HERMES_API_URL", "")
+    figma_access_token: str = _env("FIGMA_ACCESS_TOKEN", "FIGMA_API_TOKEN", default="")
+    context_pack_max_documents: int = _env_int("CONTEXT_PACK_MAX_DOCUMENTS", default=10)
+    context_pack_preview_chars: int = _env_int("CONTEXT_PACK_PREVIEW_CHARS", default=600)
+    context_pack_figma_preview_chars: int = _env_int("CONTEXT_PACK_FIGMA_PREVIEW_CHARS", default=4000)
+    context_pack_max_json_chars: int = _env_int("CONTEXT_PACK_MAX_JSON_CHARS", default=80000)
+    context_pack_include_change_history: bool = os.getenv(
+        "CONTEXT_PACK_INCLUDE_CHANGE_HISTORY", "false"
+    ).lower() in ("1", "true", "yes")
+    context_pack_figma_section_chars: int = _env_int("CONTEXT_PACK_FIGMA_SECTION_CHARS", default=8000)
+    figma_extraction_version: str = _env("FIGMA_EXTRACTION_VERSION", default="v2")
+    figma_max_section_nodes: int = _env_int("FIGMA_MAX_SECTION_NODES", default=500)
+    figma_max_section_exports: int = _env_int("FIGMA_MAX_SECTION_EXPORTS", default=12)
+    figma_max_assets: int = _env_int("FIGMA_MAX_ASSETS", default=50)
+    figma_max_text_len: int = _env_int("FIGMA_MAX_TEXT_LEN", default=2000)
+    figma_require_node_id: bool = os.getenv("FIGMA_REQUIRE_NODE_ID", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    figma_require_resolved_fonts: bool = os.getenv("FIGMA_REQUIRE_RESOLVED_FONTS", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    figma_section_slice_height: int = _env_int("FIGMA_SECTION_SLICE_HEIGHT", default=900)
+    design_fidelity_structural_block: bool = os.getenv(
+        "DESIGN_FIDELITY_STRUCTURAL_BLOCK", "true"
+    ).lower() in ("1", "true", "yes")
+    design_fidelity_visual_advisory: bool = os.getenv(
+        "DESIGN_FIDELITY_VISUAL_ADVISORY", "true"
+    ).lower() in ("1", "true", "yes")
 
 
 db_config = DatabaseConfig()

@@ -60,10 +60,10 @@ class ProjectMetadataService:
         self,
         db: DatabaseManager,
         project_id: int,
-        metadata: Optional[Dict[str, Any]],
-        repository_url: Optional[str],
-        default_branch: Optional[str],
-        runtime_preferences: Optional[Dict[str, Any]],
+        metadata: Optional[Dict[str, Any]] = None,
+        repository_url: Optional[str] = None,
+        default_branch: Optional[str] = None,
+        runtime_preferences: Optional[Dict[str, Any]] = None,
         updated_by: str = "dashboard",
     ) -> Dict[str, Any]:
         exists = await db.get_project_by_id(project_id)

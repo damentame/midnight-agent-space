@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -46,27 +48,27 @@ class CodexCliRunner:
         resolved_binary = shutil.which(resolved[0]) if resolved[0] else None
         if resolved_binary:
             resolved[0] = resolved_binary
+        if os.name == "nt" and resolved and resolved[0].lower().endswith((".cmd", ".bat")):
+            return ["cmd.exe", "/c", *resolved]
         return resolved
 
     async def _read_help(self, argv: List[str], timeout_seconds: int = 5) -> str:
         launch_argv = self._resolve_argv(argv)
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *launch_argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        def run_help() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                launch_argv,
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
             )
+
+        try:
+            completed = await asyncio.to_thread(run_help)
         except Exception:
             return ""
 
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            return ""
-
-        return ((stdout or b"") + b"\n" + (stderr or b"")).decode("utf-8", errors="replace")
+        return f"{completed.stdout or ''}\n{completed.stderr or ''}"
 
     async def detect_capabilities(self, cli_binary: str) -> CodexCliCapabilities:
         resolved = shutil.which(cli_binary) or cli_binary
@@ -77,10 +79,23 @@ class CodexCliRunner:
         exec_help = (await self._read_help([resolved, "exec", "--help"])).lower()
         run_help = (await self._read_help([resolved, "run", "--help"])).lower()
 
-        supports_exec = " exec" in root_help or "usage: codex exec" in exec_help or "--ask-for-approval" in exec_help
-        active_help = exec_help if supports_exec else run_help
+        supports_exec = True
+        active_help = exec_help or root_help or run_help
 
         supports_cd = "--cd" in active_help or "--cwd" in active_help
+        if supports_exec and not active_help.strip():
+            capabilities = CodexCliCapabilities(
+                supports_exec=True,
+                supports_json=True,
+                supports_ask_for_approval=False,
+                supports_sandbox=True,
+                supports_cd=True,
+                cd_flag="--cd",
+                supports_output_schema=True,
+                supports_output_path=True,
+            )
+            self._capability_cache[resolved] = capabilities
+            return capabilities
         capabilities = CodexCliCapabilities(
             supports_exec=supports_exec,
             supports_json="--json" in active_help,
@@ -119,6 +134,8 @@ class CodexCliRunner:
         cli_binary: str,
         plan: CodexCliRunPlan,
         capabilities: CodexCliCapabilities,
+        *,
+        include_prompt: bool = True,
     ) -> List[str]:
         if capabilities.supports_exec:
             cmd: List[str] = [cli_binary, "exec"]
@@ -140,7 +157,7 @@ class CodexCliRunner:
                 cmd.extend(["-o", plan.output_path])
             if plan.extra_args:
                 cmd.extend(plan.extra_args)
-            cmd.append(plan.prompt)
+            cmd.append(plan.prompt if include_prompt else "-")
             return cmd
 
         # Compatibility fallback for older Codex CLI.
@@ -155,7 +172,7 @@ class CodexCliRunner:
             cmd.extend(["--max-output-tokens", str(plan.max_output_tokens)])
         if plan.extra_args:
             cmd.extend(plan.extra_args)
-        cmd.extend(["--prompt", plan.prompt])
+        cmd.extend(["--prompt", plan.prompt if include_prompt else "<prompt via stdin>"])
         return cmd
 
     def parse_event_line(self, line: str, ordinal: int) -> Optional[Dict[str, Any]]:
@@ -198,7 +215,7 @@ class CodexCliRunner:
         event_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         capabilities = await self.detect_capabilities(cli_binary)
-        command = self.build_command(cli_binary, plan, capabilities)
+        command = self.build_command(cli_binary, plan, capabilities, include_prompt=False)
 
         started = time.monotonic()
         events_seen = 0
@@ -222,6 +239,7 @@ class CodexCliRunner:
             launch_command = self._resolve_argv(command)
             process = await asyncio.create_subprocess_exec(
                 *launch_command,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -229,6 +247,16 @@ class CodexCliRunner:
             return {
                 "ok": False,
                 "error": f"cli binary not found: {cli_binary}",
+                "command": command,
+                "capabilities": asdict(capabilities),
+                "event_count": 0,
+                "stdout_tail": [],
+                "stderr_tail": [],
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"failed to launch Codex CLI: {type(exc).__name__}: {exc}",
                 "command": command,
                 "capabilities": asdict(capabilities),
                 "event_count": 0,
@@ -271,9 +299,16 @@ class CodexCliRunner:
             {
                 "event_type": "process_start",
                 "event_order": 0,
-                "payload": {"command": command},
+                "payload": {"command": command, "prompt_delivery": "stdin"},
             }
         )
+
+        if process.stdin:
+            try:
+                process.stdin.write(plan.prompt.encode("utf-8"))
+                await process.stdin.drain()
+            finally:
+                process.stdin.close()
 
         stdout_task = asyncio.create_task(pump_stream(process.stdout, "stdout"))
         stderr_task = asyncio.create_task(pump_stream(process.stderr, "stderr"))
@@ -302,9 +337,25 @@ class CodexCliRunner:
             }
         )
 
+        error_message: Optional[str] = None
+        for raw_line in [*stdout_tail, *stderr_tail]:
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if payload.get("type") == "error":
+                error_message = str(payload.get("message") or "")
+            elif payload.get("type") == "turn.failed":
+                error_payload = payload.get("error") or {}
+                if isinstance(error_payload, dict):
+                    error_message = str(error_payload.get("message") or error_message or "")
+        if not error_message and stderr_tail:
+            error_message = stderr_tail[-1]
+
         elapsed_ms = int((time.monotonic() - started) * 1000)
         return {
             "ok": (exit_code == 0) and not timed_out,
+            "error": error_message if (exit_code != 0 or timed_out) else None,
             "exit_code": exit_code,
             "timed_out": timed_out,
             "elapsed_ms": elapsed_ms,

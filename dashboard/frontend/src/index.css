@@ -2,65 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Canvas paper base — dual-layer grain, strong center, fast edge falloff */
+/* Page canvas: light base + grain/linen texture on html only (not on panels). */
 html {
-  @apply bg-paper;
+  min-height: 100%;
+  background-color: #faf9f6;
 }
 
-body {
-  @apply min-h-screen bg-paper text-neutral-900 antialiased;
-}
-
-/**
- * Layer A: coarse cellulose-like noise. Layer B: fine speckle.
- * Radial mask: intense in ~35% radius, then rapid falloff so texture reads as a vignette.
- */
-body::before {
+html::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
   mix-blend-mode: multiply;
-  opacity: 1;
-  /* Push noise toward near-black specks before blending onto paper */
-  filter: contrast(2.45) brightness(0.62);
+  opacity: 0.38;
+  filter: contrast(1.55) brightness(0.94);
   background-image:
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='5' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23c)'/%3E%3C/svg%3E"),
     url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.45' numOctaves='5' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
-  background-size: 96px 96px, 48px 48px;
+  background-size: 112px 112px, 52px 52px;
   background-blend-mode: multiply, multiply;
-  /*
-    Strong grain in the middle (mask = full), then a long smooth fade to nothing at the edges.
-  */
-  -webkit-mask-image: radial-gradient(
-    ellipse 135% 120% at 50% 48%,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.98) 12%,
-    rgba(0, 0, 0, 0.88) 28%,
-    rgba(0, 0, 0, 0.55) 46%,
-    rgba(0, 0, 0, 0.22) 64%,
-    rgba(0, 0, 0, 0.06) 80%,
-    rgba(0, 0, 0, 0.01) 92%,
-    transparent 100%
-  );
-  mask-image: radial-gradient(
-    ellipse 135% 120% at 50% 48%,
-    rgba(0, 0, 0, 1) 0%,
-    rgba(0, 0, 0, 0.98) 12%,
-    rgba(0, 0, 0, 0.88) 28%,
-    rgba(0, 0, 0, 0.55) 46%,
-    rgba(0, 0, 0, 0.22) 64%,
-    rgba(0, 0, 0, 0.06) 80%,
-    rgba(0, 0, 0, 0.01) 92%,
-    transparent 100%
-  );
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
+}
+
+html::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.22;
+  mix-blend-mode: multiply;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(24, 24, 20, 0.08) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.42) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(47deg, rgba(24, 24, 20, 0.03) 0 1px, transparent 1px 11px);
+  background-size: 9px 9px, 8px 8px, 18px 18px;
+}
+
+body {
+  @apply min-h-screen text-neutral-900 antialiased;
+  background: transparent;
 }
 
 #root {
@@ -78,7 +59,7 @@ body::before {
 }
 
 .glass {
-  @apply rounded-xl border border-neutral-300/80 bg-paper-lift/85 backdrop-blur-sm shadow-sm;
+  @apply rounded-xl border border-neutral-200/90 bg-paper-lift shadow-sm;
 }
 
 .dot-glow-orange {
@@ -117,4 +98,39 @@ body::before {
 
 .ink-hover-text:hover {
   filter: url(#statInkGrain);
+}
+
+@keyframes monitor-pulse-keyframes {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(1.08);
+  }
+}
+
+@keyframes monitor-bar-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.monitor-pulse {
+  animation: monitor-pulse-keyframes 1.6s ease-in-out infinite;
+}
+
+.monitor-bar-running {
+  background-image: linear-gradient(90deg, #ea580c 0%, #fb923c 45%, #ea580c 90%);
+  background-size: 200% 100%;
+  animation: monitor-bar-shimmer 2s linear infinite;
+}
+
+.monitor-timeline-shell {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }

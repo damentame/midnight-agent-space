@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -42,12 +43,16 @@ class VerificationService:
     _DOCKER_MODE_FLAGS = {"--docker", "--use-docker"}
     _FLAGS_REQUIRING_VALUE = {
         "--ask-for-approval",
+        "--add-dir",
+        "--allowedtools",
         "--cd",
         "--container-runtime",
         "--cwd",
         "--model",
         "--output",
+        "--output-format",
         "--output-schema",
+        "--permission-mode",
         "--project-id",
         "--prompt",
         "--provider",
@@ -55,6 +60,7 @@ class VerificationService:
         "--sandbox",
         "--max-output-tokens",
         "-o",
+        "-p",
     }
 
     def verify_quick_run_inputs(
@@ -74,10 +80,51 @@ class VerificationService:
             errors.append("user_prompt is required")
         if len(user_prompt) > 20000:
             warnings.append("user_prompt is large; consider reducing context size")
-        if runtime_provider not in {"codex-cli", "cursor", "codex", "claude-code"}:
+        if runtime_provider not in {
+            "codex-cli",
+            "claude-cli",
+            "cursor-agent",
+            "cursor",
+            "codex",
+            "claude-code",
+        }:
             errors.append(f"unsupported runtime_provider '{runtime_provider}'")
         if not template_name.strip():
             errors.append("template_name is required")
+
+        return VerificationResult(ok=not errors, errors=errors, warnings=warnings)
+
+    def verify_project_runnable(
+        self,
+        *,
+        repo_path: str,
+        preview_command: Optional[str] = None,
+        preview_url: Optional[str] = None,
+    ) -> VerificationResult:
+        """Check that a workspace looks runnable after an agent build."""
+        from pathlib import Path
+
+        errors: List[str] = []
+        warnings: List[str] = []
+        root = Path(repo_path).expanduser() if repo_path else None
+        if not root or not root.exists():
+            errors.append("repository path is missing or does not exist")
+            return VerificationResult(ok=False, errors=errors, warnings=warnings)
+
+        package = root / "package.json"
+        worktree_packages = list(root.glob(".midnight/worktrees/*/*/package.json"))
+        worktree_packages.extend(root.glob(".midnight/worktrees/*/*/frontend/package.json"))
+        if not package.exists() and not worktree_packages:
+            warnings.append("no package.json found in repo or worktrees")
+
+        if preview_command and ":5173" in preview_command:
+            errors.append("preview must not use port 5173 (reserved for MAS dashboard)")
+        if preview_url and ":5173" in preview_url:
+            errors.append("preview URL must not use port 5173 (reserved for MAS dashboard)")
+        if not preview_command:
+            warnings.append("preview command not configured")
+        if not preview_url:
+            warnings.append("preview URL not configured")
 
         return VerificationResult(ok=not errors, errors=errors, warnings=warnings)
 
@@ -155,14 +202,19 @@ class VerificationService:
         if resolved_binary:
             resolved_argv[0] = resolved_binary
 
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *resolved_argv,
+        def _run() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                resolved_argv,
                 cwd=cwd,
                 env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
             )
+
+        try:
+            completed = await asyncio.to_thread(_run)
         except FileNotFoundError:
             return CommandExecutionResult(
                 ok=False,
@@ -173,31 +225,27 @@ class VerificationService:
                 elapsed_ms=0,
                 timed_out=False,
             )
-
-        timed_out = False
-        try:
-            stdout_raw, stderr_raw = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout_seconds,
+        except subprocess.TimeoutExpired as exc:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            return CommandExecutionResult(
+                ok=False,
+                command=argv,
+                exit_code=124,
+                stdout=exc.stdout or "",
+                stderr=exc.stderr or "command timed out",
+                elapsed_ms=elapsed_ms,
+                timed_out=True,
             )
-            exit_code = process.returncode or 0
-        except asyncio.TimeoutError:
-            timed_out = True
-            process.kill()
-            stdout_raw, stderr_raw = await process.communicate()
-            exit_code = process.returncode or 124
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        stdout = (stdout_raw or b"").decode("utf-8", errors="replace")
-        stderr = (stderr_raw or b"").decode("utf-8", errors="replace")
         return CommandExecutionResult(
-            ok=(exit_code == 0) and (not timed_out),
+            ok=completed.returncode == 0,
             command=argv,
-            exit_code=exit_code,
-            stdout=stdout,
-            stderr=stderr,
+            exit_code=completed.returncode,
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
             elapsed_ms=elapsed_ms,
-            timed_out=timed_out,
+            timed_out=False,
         )
 
 

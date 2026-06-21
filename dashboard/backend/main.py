@@ -4,6 +4,12 @@ FastAPI entry: run with
 from repository root.
 """
 import asyncio
+import sys
+
+# Uvicorn on Windows defaults to SelectorEventLoop, which cannot spawn subprocesses.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -13,7 +19,8 @@ from fastapi.responses import JSONResponse
 
 from .config import app_config
 from .database import db_manager
-from .routes import agent_runs, agentic, documents, projects, stats, tasks, temporal_routes, workflows
+from .routes import agent_runs, agentic, documents, figma, local_paths, projects, stats, tasks, temporal_routes, workflows
+from .services.run_service import run_service
 from .temporal_service import fetch_workflow_snapshot
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +30,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db_manager.initialize()
+    try:
+        recovery = await run_service.recover_orphan_runs(db_manager)
+        if recovery.get("recovered"):
+            logger.info("orphan run recovery: %s", recovery.get("recovered"))
+    except Exception:  # noqa: BLE001
+        logger.exception("orphan run recovery failed on startup")
     logger.info("Dashboard API ready on port %s", app_config.api_port)
     yield
     await db_manager.close()
@@ -46,6 +59,8 @@ app.add_middleware(
 app.include_router(stats.router, prefix="/api", tags=["stats"])
 app.include_router(projects.router, prefix="/api", tags=["projects"])
 app.include_router(documents.router, prefix="/api", tags=["documents"])
+app.include_router(figma.router, prefix="/api", tags=["figma"])
+app.include_router(local_paths.router, prefix="/api", tags=["local-paths"])
 app.include_router(tasks.router, prefix="/api", tags=["tasks"])
 app.include_router(workflows.router, prefix="/api", tags=["workflows"])
 app.include_router(temporal_routes.router, prefix="/api")

@@ -12,12 +12,12 @@ export default {
           bright: "#f97316",
           muted: "#c2410c",
         },
-        /** Warm canvas — never pure #fff */
+        /** Warm off-white page; panels use lift/field for solid surfaces */
         paper: {
-          DEFAULT: "#e8e3d8",
-          bright: "#ebe7df",
-          lift: "#ece9e0",
-          field: "#e6e1d6",
+          DEFAULT: "#faf9f6",
+          bright: "#ffffff",
+          lift: "#f5f4f1",
+          field: "#eeedea",
         },
       },
       animation: {

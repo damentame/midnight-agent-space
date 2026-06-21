@@ -1,0 +1,13 @@
+{
+  "name": "midnight-agent-space",
+  "private": true,
+  "description": "Local tooling for Midnight Agent Space CLI runtimes",
+  "scripts": {
+    "setup:clis": "npm install && node scripts/verify-agent-clis.js",
+    "verify:clis": "node scripts/verify-agent-clis.js"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.161",
+    "@openai/codex": "^0.136.0"
+  }
+}

@@ -218,8 +218,28 @@ def extract_document_content(document: Dict[str, Any]) -> str:
     # Try structured_json
     structured_json = document.get("structured_json")
     if structured_json:
+        if isinstance(structured_json, str):
+            try:
+                import json
+                structured_json = json.loads(structured_json)
+            except Exception:
+                structured_json = None
         if isinstance(structured_json, dict):
-            # Try common text fields
+            agent_context = structured_json.get("agent_context") or {}
+            if structured_json.get("content_kind") == "figma_import" or document.get("document_type") == "figma_import":
+                parts = []
+                if document.get("raw_text_content"):
+                    parts.append(document["raw_text_content"])
+                for sec in agent_context.get("sections") or []:
+                    manifest = sec.get("manifest_text")
+                    if manifest:
+                        parts.append(manifest)
+                tokens = agent_context.get("tokens") or {}
+                if tokens:
+                    import json as _json
+                    parts.append("Design tokens:\n" + _json.dumps(tokens, indent=2))
+                if parts:
+                    return "\n\n".join(parts)
             for field in ["content", "text", "body", "description"]:
                 if field in structured_json:
                     text = structured_json[field]

@@ -1,6 +1,7 @@
 # Generated frontend assets
 dashboard/frontend/dist/
 dashboard/frontend/node_modules/
+node_modules/
 
 # Python cache files
 __pycache__/

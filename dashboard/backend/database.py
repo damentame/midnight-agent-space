@@ -37,6 +37,8 @@ class DatabaseManager:
             get_database_dsn(),
             min_size=db_config.min_connections,
             max_size=db_config.max_connections,
+            timeout=10,
+            command_timeout=30,
             server_settings={"search_path": "main", "application_name": "mas_dashboard"},
         )
         async with self._pool.acquire() as conn:
@@ -153,6 +155,7 @@ class DatabaseManager:
                created_at, updated_at
         FROM main.task
         WHERE project_id = $1
+          AND COALESCE(status, '') <> 'SUPERSEDED'
         ORDER BY COALESCE(priority, 99), task_id
         LIMIT $2
         """
@@ -177,8 +180,9 @@ class DatabaseManager:
         q = """
         SELECT document_id, project_id, document_name, document_type, raw_text_content,
                file_extension, file_mime_type, file_size_bytes,
-               version_number, is_active_version, serialization_status,
-               created_at, updated_at
+               (file_content IS NOT NULL) AS has_binary_content,
+               version_number, is_active_version, serialization_status, embedding_status,
+               structured_json, created_at, updated_at
         FROM main.project_document
         WHERE project_id = $1
         ORDER BY document_id DESC
@@ -187,12 +191,81 @@ class DatabaseManager:
         out = []
         for r in rows:
             d = dict(r)
-            # omit huge text in list view
-            if d.get("raw_text_content"):
-                d["raw_text_preview"] = (d["raw_text_content"][:200] + "…") if len(d["raw_text_content"]) > 200 else d["raw_text_content"]
+            structured = d.pop("structured_json", None)
+            if isinstance(structured, str):
+                try:
+                    structured = json.loads(structured)
+                except Exception:
+                    structured = None
+            if isinstance(structured, dict):
+                agent_context = structured.get("agent_context") or {}
+                d["content_kind"] = structured.get("content_kind")
+                d["user_instructions"] = agent_context.get("user_instructions")
+                d["content_summary"] = agent_context.get("summary")
+                preview = agent_context.get("text_preview")
+            else:
+                preview = None
+            raw_text = d.get("raw_text_content")
+            if raw_text:
+                text_preview = raw_text if len(raw_text) <= 200 else raw_text[:200] + "…"
+                d["raw_text_preview"] = text_preview
                 del d["raw_text_content"]
+            elif preview:
+                d["raw_text_preview"] = preview if len(preview) <= 200 else preview[:200] + "…"
+            elif d.get("content_summary"):
+                summary = str(d["content_summary"])
+                d["raw_text_preview"] = summary if len(summary) <= 200 else summary[:200] + "…"
+            mime = (d.get("file_mime_type") or "").lower()
+            ext = (d.get("file_extension") or "").lower()
+            has_binary = bool(d.pop("has_binary_content", False))
+            d["has_file_content"] = has_binary and (
+                mime.startswith("image/")
+                or ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+            )
             out.append(_json_safe(d))
         return out
+
+    async def get_document_file(
+        self, project_id: int, document_id: int
+    ) -> Optional[Dict[str, Any]]:
+        row = await self.fetch_one(
+            """
+            SELECT document_name, file_mime_type, file_extension, file_content, file_size_bytes
+            FROM main.project_document
+            WHERE project_id = $1 AND document_id = $2
+            """,
+            project_id,
+            document_id,
+        )
+        return dict(row) if row else None
+
+    async def delete_documents(self, project_id: int, document_ids: List[int]) -> int:
+        if not document_ids:
+            return 0
+        try:
+            await self.execute(
+                """
+                DELETE FROM main.document_version
+                WHERE project_id = $1 AND document_id = ANY($2::bigint[])
+                """,
+                project_id,
+                document_ids,
+            )
+        except Exception:
+            logger.debug("document_version delete skipped", exc_info=True)
+        status = await self.execute(
+            """
+            DELETE FROM main.project_document
+            WHERE project_id = $1 AND document_id = ANY($2::bigint[])
+            """,
+            project_id,
+            document_ids,
+        )
+        try:
+            deleted = int(str(status).split()[-1])
+        except (TypeError, ValueError):
+            deleted = 0
+        return deleted
 
     async def insert_document_upload(
         self,
@@ -204,20 +277,26 @@ class DatabaseManager:
         mime: Optional[str],
         size: int,
         file_bytes: Optional[bytes],
+        *,
+        parent_document_id: Optional[int] = None,
+        structured_json: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         q = """
         INSERT INTO main.project_document (
-            project_id, document_name, document_type, raw_text_content,
+            project_id, parent_document_id, document_name, document_type, raw_text_content,
             file_extension, file_mime_type, file_size_bytes, file_content,
+            structured_json, serialized_payload,
             version_number, is_active_version, created_by, serialization_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, true, 'dashboard', 'PENDING')
-        RETURNING document_id, project_id, document_name, document_type, file_extension,
-                  file_size_bytes, serialization_status, created_at
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, 1, true, 'dashboard', 'PENDING')
+        RETURNING document_id, project_id, parent_document_id, document_name, document_type,
+                  file_extension, file_size_bytes, serialization_status, created_at
         """
+        payload = json.dumps(structured_json) if structured_json else None
         row = await self.fetch_one(
             q,
             project_id,
+            parent_document_id,
             document_name,
             document_type,
             raw_text,
@@ -225,17 +304,98 @@ class DatabaseManager:
             mime,
             size,
             file_bytes,
+            payload,
         )
         return _json_safe(dict(row)) if row else {}
 
+    async def deactivate_figma_import_family(
+        self,
+        project_id: int,
+        *,
+        node_id: Optional[str] = None,
+    ) -> int:
+        """Mark prior figma_import trees inactive (parent + children)."""
+        if node_id:
+            rows = await self.fetch_many(
+                """
+                SELECT document_id, structured_json
+                FROM main.project_document
+                WHERE project_id = $1
+                  AND document_type = 'figma_import'
+                  AND COALESCE(is_active_version, true) = true
+                """,
+                project_id,
+            )
+            parent_ids: List[int] = []
+            for row in rows:
+                structured = row.get("structured_json")
+                if isinstance(structured, str):
+                    try:
+                        structured = json.loads(structured)
+                    except Exception:
+                        structured = None
+                figma_meta = (structured or {}).get("figma") or {}
+                if str(figma_meta.get("node_id") or "") == str(node_id):
+                    parent_ids.append(int(row["document_id"]))
+            if not parent_ids:
+                return 0
+            status = await self.execute(
+                """
+                UPDATE main.project_document
+                SET is_active_version = false, updated_at = NOW()
+                WHERE project_id = $1
+                  AND (
+                    document_id = ANY($2::bigint[])
+                    OR parent_document_id = ANY($2::bigint[])
+                  )
+                """,
+                project_id,
+                parent_ids,
+            )
+        else:
+            status = await self.execute(
+                """
+                UPDATE main.project_document
+                SET is_active_version = false, updated_at = NOW()
+                WHERE project_id = $1
+                  AND document_type IN ('figma_import', 'figma_export_image', 'figma_section_export', 'figma_asset')
+                  AND COALESCE(is_active_version, true) = true
+                """,
+                project_id,
+            )
+        try:
+            return int(str(status).split()[-1])
+        except (TypeError, ValueError):
+            return 0
+
+    async def get_active_figma_import(self, project_id: int) -> Optional[Dict[str, Any]]:
+        row = await self.fetch_one(
+            """
+            SELECT document_id, document_name, structured_json, raw_text_content, created_at
+            FROM main.project_document
+            WHERE project_id = $1
+              AND document_type = 'figma_import'
+              AND COALESCE(is_active_version, true) = true
+            ORDER BY document_id DESC
+            LIMIT 1
+            """,
+            project_id,
+        )
+        if not row:
+            return None
+        d = dict(row)
+        structured = d.get("structured_json")
+        if isinstance(structured, str):
+            try:
+                structured = json.loads(structured)
+            except Exception:
+                structured = None
+        d["structured_json"] = structured
+        return _json_safe(d)
+
     async def delete_document_if_pending(self, project_id: int, document_id: int) -> bool:
-        q = """
-        DELETE FROM main.project_document
-        WHERE document_id = $1 AND project_id = $2
-          AND COALESCE(serialization_status, 'PENDING') = 'PENDING'
-        """
-        status = await self.execute(q, document_id, project_id)
-        return status.endswith("DELETE 1")
+        deleted = await self.delete_documents(project_id, [document_id])
+        return deleted > 0
 
     async def dashboard_stats(self) -> Dict[str, Any]:
         projects = await self.fetch_val("SELECT COUNT(*) FROM main.project")

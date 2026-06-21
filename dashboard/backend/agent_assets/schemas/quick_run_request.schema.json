@@ -19,7 +19,7 @@
     },
     "runtime_provider": {
       "type": "string",
-      "enum": ["codex-cli", "cursor", "codex", "claude-code"],
+      "enum": ["codex-cli", "claude-cli", "cursor", "codex", "claude-code"],
       "default": "codex-cli"
     },
     "model": {

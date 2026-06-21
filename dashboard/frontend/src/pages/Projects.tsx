@@ -1,55 +1,65 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type Project } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, type AgentRun, type Project, type ProjectSummary } from "../api";
 
 export default function Projects() {
-  const [list, setList] = useState<Project[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [savingId, setSavingId] = useState<number | null>(null);
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [summaries, setSummaries] = useState<Record<number, ProjectSummary>>({});
+  const [runs, setRuns] = useState<Record<number, AgentRun[]>>({});
   const [name, setName] = useState("");
-  const [projectType, setProjectType] = useState("General");
-  const [description, setDescription] = useState("");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("");
-  const [editing, setEditing] = useState<Record<number, Partial<Project>>>({});
+  const [purpose, setPurpose] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  const load = () =>
-    api
-      .projects({ q: query || undefined, status: status || undefined, limit: 300 })
-      .then(setList)
-      .catch((e) => setErr(String(e.message)));
+  const load = async () => {
+    const batch = await api.batchProjectSummaries(50);
+    const summaryRows = batch.summaries ?? [];
+    const projectRows = summaryRows.map((row) => row.project);
+    setProjects(projectRows);
+    setSummaries(
+      Object.fromEntries(summaryRows.map((row) => [row.project.project_id, row])) as Record<number, ProjectSummary>,
+    );
+    setRuns(
+      Object.fromEntries(
+        summaryRows.map((row) => [
+          row.project.project_id,
+          row.latest_run ? [row.latest_run as unknown as AgentRun] : [],
+        ]),
+      ),
+    );
+  };
 
   useEffect(() => {
-    load();
-  }, [query, status]);
+    load().catch((e) => setErr(String(e.message)));
+  }, []);
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-        <div>
-          <p className="heading-sub mb-1">Directory</p>
-          <h1 className="heading-main text-2xl">Projects</h1>
-          <p className="text-neutral-600 text-sm mt-2">Select a project or create one.</p>
-        </div>
+      <section className="glass p-6 border-orange-300/80 ring-2 ring-orange-100">
+        <p className="heading-sub mb-2">Projects</p>
+        <h1 className="heading-main text-2xl">Start or resume a build flow</h1>
+        <p className="text-sm text-neutral-600 mt-3 max-w-2xl">
+          Choose a project to continue from its current state. Create a new one only needs a name and optional purpose.
+        </p>
+
         <form
-          className="flex flex-wrap gap-2 items-center"
+          className="mt-5 grid lg:grid-cols-[1fr_2fr_auto] gap-3"
           onSubmit={async (e) => {
             e.preventDefault();
             if (!name.trim()) return;
             setCreating(true);
             setErr(null);
             try {
-              await api.createProject({
+              const created = await api.createProject({
                 project_name: name.trim(),
-                project_type: projectType || "General",
-                description: description.trim() || undefined,
+                description: purpose.trim() || undefined,
+                project_type: "Agentic build",
                 status: "ACTIVE",
               });
               setName("");
-              setProjectType("General");
-              setDescription("");
-              await load();
+              setPurpose("");
+              navigate(`/projects/${created.project_id}/context`);
             } catch (ex: unknown) {
               setErr(ex instanceof Error ? ex.message : String(ex));
             } finally {
@@ -58,172 +68,106 @@ export default function Projects() {
           }}
         >
           <input
-            className="bg-paper-bright border border-neutral-300 rounded-lg px-3 py-2 text-sm w-48 focus:outline-none focus:ring-1 focus:ring-orange-500 text-neutral-900"
-            placeholder="New project name"
+            className="bg-paper-bright border border-neutral-300 rounded-lg px-3 py-3 text-sm text-neutral-900"
+            placeholder="Project name"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <input
-            className="bg-paper-bright border border-neutral-300 rounded-lg px-3 py-2 text-sm w-32 focus:outline-none focus:ring-1 focus:ring-orange-500 text-neutral-900"
-            placeholder="Type"
-            value={projectType}
-            onChange={(e) => setProjectType(e.target.value)}
-          />
-          <input
-            className="bg-paper-bright border border-neutral-300 rounded-lg px-3 py-2 text-sm w-56 focus:outline-none focus:ring-1 focus:ring-orange-500 text-neutral-900"
-            placeholder="Description"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            className="bg-paper-bright border border-neutral-300 rounded-lg px-3 py-3 text-sm text-neutral-900"
+            placeholder="Purpose or goal, optional"
+            value={purpose}
+            onChange={(e) => setPurpose(e.target.value)}
           />
           <button
             type="submit"
             disabled={creating}
-            className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-sm font-bold uppercase tracking-widest text-white disabled:opacity-50"
+            className="px-5 py-3 rounded-lg bg-orange-600 text-white text-xs font-bold uppercase tracking-widest hover:bg-orange-500 disabled:opacity-50"
           >
-            {creating ? "…" : "Create"}
+            {creating ? "Creating" : "Create project"}
           </button>
         </form>
-      </div>
+      </section>
 
-      <div className="glass p-4 border-neutral-200 flex flex-wrap gap-3 items-end">
-        <label className="block">
-          <span className="heading-sub">Search</span>
-          <input
-            className="mt-1 bg-paper-bright border border-neutral-300 rounded-lg px-3 py-2 text-sm w-64 text-neutral-900"
-            placeholder="name, description, type"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
-        <label className="block">
-          <span className="heading-sub">Status</span>
-          <select
-            className="mt-1 bg-paper-bright border border-neutral-300 rounded-lg px-3 py-2 text-sm w-40 text-neutral-900"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="">All</option>
-            <option value="ACTIVE">ACTIVE</option>
-            <option value="ARCHIVED">ARCHIVED</option>
-          </select>
-        </label>
-      </div>
+      <section className="space-y-3">
+        {projects.map((project) => {
+          const summary = summaries[project.project_id];
+          const projectRuns = runs[project.project_id] ?? [];
+          const docCount = summary?.counts.documents ?? 0;
+          const taskCount = summary?.counts.tasks ?? 0;
+          const runCount = summary?.counts.runs ?? 0;
+          const latestRun = projectRuns[0] ?? summary?.latest_run;
+          const next =
+            docCount === 0
+              ? "Add documents"
+              : taskCount === 0
+                ? "Serialize context"
+                : runCount === 0
+                  ? "Execute build"
+                  : "Review and continue";
 
-      {err && (
-        <div className="text-neutral-700 text-sm border border-neutral-300/80 rounded-lg p-3 bg-paper-lift/80">{err}</div>
-      )}
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {list.map((p) => (
-          <div
-            key={p.project_id}
-            className="glass p-5 block hover:border-orange-300/60 transition-colors border-neutral-200 group"
-          >
-            <div className="flex justify-between items-start gap-3">
-              <Link to={`/projects/${p.project_id}`} className="block">
-                <h2 className="heading-main text-sm group-hover:text-orange-600 transition-colors">
-                  {p.project_name ?? `Project ${p.project_id}`}
-                </h2>
-              </Link>
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-neutral-200 text-neutral-600 border border-neutral-300">
-                {p.status ?? "UNKNOWN"}
-              </span>
-            </div>
-            <p className="text-neutral-600 text-sm mt-2 line-clamp-2">{p.description || "—"}</p>
-            <p className="text-neutral-500 text-xs mt-3 uppercase tracking-wide">{p.project_type || "—"}</p>
-
-            <div className="mt-4 pt-3 border-t border-neutral-200 space-y-2">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <input
-                  className="bg-paper-bright border border-neutral-300 rounded-lg px-2 py-1.5 text-xs text-neutral-900"
-                  placeholder="Edit name"
-                  value={String(editing[p.project_id]?.project_name ?? p.project_name ?? "")}
-                  onChange={(e) =>
-                    setEditing((prev) => ({
-                      ...prev,
-                      [p.project_id]: {
-                        ...prev[p.project_id],
-                        project_name: e.target.value,
-                      },
-                    }))
-                  }
-                />
-                <input
-                  className="bg-paper-bright border border-neutral-300 rounded-lg px-2 py-1.5 text-xs text-neutral-900"
-                  placeholder="Edit type"
-                  value={String(editing[p.project_id]?.project_type ?? p.project_type ?? "")}
-                  onChange={(e) =>
-                    setEditing((prev) => ({
-                      ...prev,
-                      [p.project_id]: {
-                        ...prev[p.project_id],
-                        project_type: e.target.value,
-                      },
-                    }))
-                  }
-                />
-              </div>
-              <textarea
-                className="w-full bg-paper-bright border border-neutral-300 rounded-lg px-2 py-1.5 text-xs min-h-[70px] text-neutral-900"
-                placeholder="Edit description"
-                value={String(editing[p.project_id]?.description ?? p.description ?? "")}
-                onChange={(e) =>
-                  setEditing((prev) => ({
-                    ...prev,
-                    [p.project_id]: {
-                      ...prev[p.project_id],
-                      description: e.target.value,
-                    },
-                  }))
-                }
-              />
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={savingId === p.project_id}
-                  className="px-3 py-1 rounded border border-orange-600 text-orange-600 text-[10px] font-bold uppercase tracking-widest hover:bg-orange-50 disabled:opacity-50"
-                  onClick={async () => {
-                    setErr(null);
-                    setSavingId(p.project_id);
-                    try {
-                      const draft = editing[p.project_id] ?? {};
-                      await api.patchProject(p.project_id, draft);
-                      await load();
-                    } catch (ex: unknown) {
-                      setErr(ex instanceof Error ? ex.message : String(ex));
-                    } finally {
-                      setSavingId(null);
-                    }
-                  }}
-                >
-                  Save edits
-                </button>
-                {String(p.status ?? "").toUpperCase() !== "ARCHIVED" && (
-                  <button
-                    type="button"
-                    disabled={savingId === p.project_id}
-                    className="px-3 py-1 rounded border border-neutral-400 text-neutral-600 text-[10px] font-bold uppercase tracking-widest hover:bg-neutral-100 disabled:opacity-50"
-                    onClick={async () => {
-                      setErr(null);
-                      setSavingId(p.project_id);
-                      try {
-                        await api.archiveProject(p.project_id);
-                        await load();
-                      } catch (ex: unknown) {
-                        setErr(ex instanceof Error ? ex.message : String(ex));
-                      } finally {
-                        setSavingId(null);
-                      }
-                    }}
+          return (
+            <div key={project.project_id} className="glass p-5 border-neutral-200">
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                <div>
+                  <p className="heading-sub mb-1">{next}</p>
+                  <h2 className="heading-main text-lg">{project.project_name}</h2>
+                  <p className="text-sm text-neutral-600 mt-2 max-w-2xl">{project.description || "No purpose written yet."}</p>
+                  <div className="flex flex-wrap gap-2 mt-4 text-[10px] font-bold uppercase tracking-widest text-neutral-600">
+                    <span className="rounded-full border border-neutral-300 bg-paper-field px-3 py-1">{docCount} docs</span>
+                    <span className="rounded-full border border-neutral-300 bg-paper-field px-3 py-1">{taskCount} tasks</span>
+                    <span className="rounded-full border border-neutral-300 bg-paper-field px-3 py-1">{runCount} runs</span>
+                    {latestRun && (
+                      <span className="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-orange-700">
+                        latest {latestRun.status}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link
+                    to={`/projects/${project.project_id}/execute`}
+                    className="px-4 py-2 rounded-lg bg-orange-600 text-white text-xs font-bold uppercase tracking-widest hover:bg-orange-500"
                   >
-                    Archive
-                  </button>
-                )}
+                    Open flow
+                  </Link>
+                  {latestRun && (
+                    <Link
+                      to={`/projects/${project.project_id}/runs/${latestRun.agent_run_id}`}
+                      className="px-4 py-2 rounded-lg border border-neutral-400 text-neutral-700 text-xs font-bold uppercase tracking-widest hover:border-orange-300"
+                    >
+                      Latest run
+                    </Link>
+                  )}
+                </div>
               </div>
+
+              {projectRuns.length > 0 && (
+                <div className="mt-4 border-t border-neutral-200 pt-3">
+                  <p className="heading-sub mb-2">Previous runs</p>
+                  <div className="grid md:grid-cols-3 gap-2">
+                    {projectRuns.map((run) => (
+                      <Link
+                        key={run.agent_run_id}
+                        to={`/projects/${project.project_id}/runs/${run.agent_run_id}`}
+                        className="rounded-lg border border-neutral-300 bg-paper-field p-3 hover:border-orange-300"
+                      >
+                        <p className="font-bold text-neutral-900 text-sm">Run #{run.agent_run_id}</p>
+                        <p className="text-xs text-neutral-600 mt-1">
+                          {run.status ?? "UNKNOWN"} / {run.runtime_provider ?? "runtime"}
+                        </p>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
-      </div>
+          );
+        })}
+        {projects.length === 0 && <p className="text-sm text-neutral-600">No projects yet. Create one above.</p>}
+      </section>
+
+      {err && <div className="text-sm text-neutral-700">{err}</div>}
     </div>
   );
 }

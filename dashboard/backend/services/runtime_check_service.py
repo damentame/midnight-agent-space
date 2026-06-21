@@ -5,6 +5,7 @@ import shutil
 from typing import Any, Dict
 
 from ..config import app_config
+from .model_routing_service import model_catalog
 
 
 class RuntimeCheckService:
@@ -13,6 +14,14 @@ class RuntimeCheckService:
         codex_path = shutil.which(codex_bin) if codex_bin else None
         git_path = shutil.which("git")
         hermes_enabled = bool(app_config.hermes_enabled)
+
+        claude_bin = app_config.claude_cli_bin
+        claude_path = shutil.which(claude_bin) if claude_bin else None
+
+        cursor_bin = app_config.cursor_agent_bin
+        cursor_path = shutil.which(cursor_bin) if cursor_bin else None
+        if not cursor_path and cursor_bin != "agent":
+            cursor_path = shutil.which("agent")
 
         return {
             "codex_cli": {
@@ -23,6 +32,49 @@ class RuntimeCheckService:
                 "approval_mode": app_config.codex_approval_mode,
                 "sandbox_mode": app_config.codex_sandbox_mode,
                 "timeout_seconds": app_config.codex_cli_timeout_seconds,
+            },
+            "claude_cli": {
+                "configured_binary": claude_bin,
+                "found": bool(claude_path),
+                "path": claude_path,
+                "default_model": app_config.claude_cli_model,
+                "permission_mode": app_config.claude_permission_mode,
+                "allowed_tools": app_config.claude_allowed_tools,
+                "timeout_seconds": app_config.claude_cli_timeout_seconds,
+            },
+            "cursor_agent": {
+                "configured_binary": cursor_bin,
+                "found": bool(cursor_path),
+                "path": cursor_path,
+                "default_model": app_config.cursor_agent_model or None,
+                "timeout_seconds": app_config.cursor_agent_timeout_seconds,
+            },
+            "cli_runtimes": [
+                {
+                    "id": "codex-cli",
+                    "label": "Codex CLI",
+                    "found": bool(codex_path),
+                    "configured_binary": codex_bin,
+                    "default_model": app_config.codex_cli_model or None,
+                },
+                {
+                    "id": "claude-cli",
+                    "label": "Claude CLI",
+                    "found": bool(claude_path),
+                    "configured_binary": claude_bin,
+                    "default_model": app_config.claude_cli_model or None,
+                },
+                {
+                    "id": "cursor-agent",
+                    "label": "Cursor Agent",
+                    "found": bool(cursor_path),
+                    "configured_binary": cursor_bin,
+                    "default_model": app_config.cursor_agent_model or None,
+                },
+            ],
+            "reviewer_runtime": {
+                "default": app_config.midnight_reviewer_runtime,
+                "options": ["claude-cli", "codex-cli"],
             },
             "git": {
                 "found": bool(git_path),
@@ -43,6 +95,7 @@ class RuntimeCheckService:
             "environment": {
                 "agent_provider_default": os.getenv("AGENT_PROVIDER_DEFAULT", "cursor"),
             },
+            "model_catalog": model_catalog(),
         }
 
 
