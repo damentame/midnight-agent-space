@@ -1,5 +1,6 @@
 import type { ProjectProgress } from "../api";
 import LoadingButton from "./LoadingButton";
+import TokenUsagePanel from "./TokenUsagePanel";
 
 type Props = {
   progress: ProjectProgress | null;
@@ -80,6 +81,10 @@ export default function ProgressDashboard({ progress, previewUrl, onPromote, pro
           </ul>
         </div>
       )}
+
+      {progress.token_usage?.totals?.total_tokens ? (
+        <TokenUsagePanel usage={progress.token_usage} title="Latest run tokens" compact />
+      ) : null}
 
       {previewUrl && (
         <div>

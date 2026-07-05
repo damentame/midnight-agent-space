@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import RunTaskTimeline from "../components/run-monitor/RunTaskTimeline";
 import StatusBanner from "../components/StatusBanner";
+import TokenUsagePanel from "../components/TokenUsagePanel";
 import TaskStatusBadge from "../components/run-monitor/TaskStatusBadge";
 import { useRunMonitor } from "../hooks/useRunMonitor";
 import { api } from "../api";
@@ -16,6 +17,7 @@ import {
   textValue,
   timestamp,
 } from "../lib/runMonitor";
+import { extractTokenUsage } from "../lib/tokenUsage";
 
 export default function RunDetail() {
   const { id, runId } = useParams();
@@ -45,6 +47,7 @@ export default function RunDetail() {
   const featureReview = asRecord(asRecord(resultPayload.review).feature_review);
   const featureReviewRecord = asRecord(featureReview);
   const designFidelity = asRecord(resultPayload.design_fidelity ?? featureReviewRecord.design_fidelity);
+  const tokenUsage = useMemo(() => extractTokenUsage(resultPayload), [resultPayload]);
 
   const status = String(run?.status ?? "loading").toUpperCase();
   const timelineEntries = useMemo(
@@ -150,6 +153,8 @@ export default function RunDetail() {
         }}
       />
       {cleanupMsg && <div className="text-sm text-neutral-700">{cleanupMsg}</div>}
+
+      <TokenUsagePanel usage={tokenUsage} title="Run token efficiency" />
 
       <div className="glass p-5 border-orange-300/70 ring-2 ring-orange-100 space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">

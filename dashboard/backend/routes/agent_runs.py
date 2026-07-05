@@ -12,6 +12,7 @@ from ..database import DatabaseManager, get_db
 from ..services.model_routing_service import model_catalog
 from ..services.run_service import run_service
 from ..services.runtime_check_service import runtime_check_service
+from ..services.token_usage_service import APP_EQUIVALENT_TARGETS, TASK_TYPE_BUDGETS, token_usage_service
 from .figma_handlers import FigmaTokenBody, validate_figma_token_handler
 
 router = APIRouter()
@@ -222,3 +223,45 @@ async def list_project_run_git_changes(
     if not run or int(run.get("project_id") or 0) != project_id:
         raise HTTPException(status_code=404, detail="Run not found")
     return await run_service.list_run_git_changes(db, run_id=run_id, limit=limit)
+
+
+@router.get("/token-targets")
+async def token_efficiency_targets():
+    """Commercial token budgets and app-equivalent targets for MAS efficiency tracking."""
+    return {
+        "ok": True,
+        "app_equivalent_targets": APP_EQUIVALENT_TARGETS,
+        "task_type_budgets": TASK_TYPE_BUDGETS,
+        "baseline_tokens_per_app": 110_000_000,
+        "commercial_target_tokens": APP_EQUIVALENT_TARGETS["commercial"],
+        "excellent_target_tokens": APP_EQUIVALENT_TARGETS["excellent"],
+    }
+
+
+@router.get("/projects/{project_id}/token-usage")
+async def project_token_usage(
+    project_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    db: DatabaseManager = Depends(get_db),
+):
+    project = await db.get_project_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    summary = await token_usage_service.project_usage_summary(db, project_id, limit=limit)
+    return {"ok": True, **summary}
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/token-usage")
+async def run_token_usage(
+    project_id: int,
+    run_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    run = await run_service.get_run(db, run_id=run_id)
+    if not run or int(run.get("project_id") or 0) != project_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    payload = run.get("result_payload") or {}
+    usage = token_usage_service.run_usage_from_payload(payload if isinstance(payload, dict) else {})
+    if not usage:
+        raise HTTPException(status_code=404, detail="No token usage recorded for this run yet")
+    return {"ok": True, "agent_run_id": run_id, "project_id": project_id, "token_usage": usage}

@@ -10,6 +10,7 @@ from ..config import app_config
 from ..database import DatabaseManager
 from .change_history_service import change_history_service
 from .document_version_service import document_version_service
+from .project_context_cache_service import project_context_cache_service
 from .project_metadata_service import project_metadata_service
 
 
@@ -234,6 +235,59 @@ class ContextPackService:
             return value
         return value[:limit] + "…"
 
+    def _task_context_limits(self, task: Optional[Dict[str, Any]]) -> Dict[str, int]:
+        """Task-scoped context caps — smaller slices for implementation work."""
+        if not task:
+            return {
+                "max_documents": app_config.context_pack_max_documents,
+                "preview_chars": app_config.context_pack_preview_chars,
+                "figma_chars": app_config.context_pack_figma_preview_chars,
+            }
+        task_type = str(task.get("task_type") or "").lower()
+        name = str(task.get("task_name") or "").lower()
+        if "implement section" in name or task_type == "implementation":
+            return {
+                "max_documents": app_config.context_pack_task_max_documents,
+                "preview_chars": min(app_config.context_pack_preview_chars, 360),
+                "figma_chars": min(app_config.context_pack_figma_section_chars, 6000),
+            }
+        if task_type in {"review", "planning", "analysis"}:
+            return {
+                "max_documents": min(app_config.context_pack_max_documents, 6),
+                "preview_chars": app_config.context_pack_preview_chars,
+                "figma_chars": app_config.context_pack_figma_preview_chars,
+            }
+        return {
+            "max_documents": app_config.context_pack_task_max_documents,
+            "preview_chars": app_config.context_pack_preview_chars,
+            "figma_chars": app_config.context_pack_figma_preview_chars,
+        }
+
+    @staticmethod
+    def compact_diff_context(diff_summary: Optional[Dict[str, Any]], *, max_files: int = 12) -> Dict[str, Any]:
+        """Diff-only context for integrate/review tasks."""
+        if not isinstance(diff_summary, dict):
+            return {"changed_files": [], "summary": "No git diff available."}
+        files = []
+        for row in (diff_summary.get("files") or diff_summary.get("changed_files") or [])[:max_files]:
+            if isinstance(row, dict):
+                files.append(
+                    {
+                        "path": row.get("path") or row.get("file"),
+                        "status": row.get("status"),
+                        "additions": row.get("additions"),
+                        "deletions": row.get("deletions"),
+                    }
+                )
+            elif isinstance(row, str):
+                files.append({"path": row})
+        return {
+            "summary": diff_summary.get("summary") or diff_summary.get("message"),
+            "changed_file_count": diff_summary.get("changed_file_count") or len(files),
+            "changed_files": files,
+            "diff_only": True,
+        }
+
     def compact_for_prompt(
         self,
         context_pack: Dict[str, Any],
@@ -243,10 +297,13 @@ class ContextPackService:
         preview_chars: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Token-efficient context slice for CLI prompts (full pack remains in DB)."""
-        max_docs = max_documents or app_config.context_pack_max_documents
-        preview_limit = preview_chars or app_config.context_pack_preview_chars
-        figma_preview_limit = app_config.context_pack_figma_preview_chars
+        limits = self._task_context_limits(task)
+        max_docs = max_documents or limits["max_documents"]
+        preview_limit = preview_chars or limits["preview_chars"]
+        figma_preview_limit = limits["figma_chars"]
         task_text = self._task_search_text(task)
+        task_type = str(task.get("task_type") or "").lower() if task else ""
+        task_name = str(task.get("task_name") or "").lower() if task else ""
 
         rag = context_pack.get("rag_ready_context") or {}
         source_docs = list(rag.get("documents") or [])
@@ -363,8 +420,14 @@ class ContextPackService:
             "context_documents": compact_docs,
             "document_count": len(source_docs),
             "included_document_count": len(compact_docs),
-            "retrieval_guidance": (rag.get("retrieval_guidance") or [])[:4],
+            "retrieval_guidance": (rag.get("retrieval_guidance") or [])[:3],
+            "context_mode": "task_scoped" if task else "run_level",
         }
+        if app_config.context_pack_use_architecture_cache:
+            cache = meta_blob.get("architecture_cache") if isinstance(meta_blob, dict) else None
+            cached = project_context_cache_service.compact_cached_summary(cache)
+            if cached:
+                compact["architecture_summary"] = cached
         if has_figma:
             compact["design_context_required"] = True
             compact["design_read_first"] = (
@@ -378,8 +441,12 @@ class ContextPackService:
                 "task_id": task.get("task_id"),
                 "task_name": task.get("task_name"),
                 "task_type": task.get("task_type"),
-                "description": self._truncate(str(task.get("description") or ""), 1200),
+                "description": self._truncate(str(task.get("description") or ""), 800),
             }
+            if "integrate" in task_name or "review" in task_name or task_type == "review":
+                compact["context_hint"] = (
+                    "Use diff-only updates and staged .midnight/context files; avoid reloading full project docs."
+                )
         else:
             tasks = context_pack.get("tasks") or []
             compact["task_inventory"] = [
@@ -389,8 +456,13 @@ class ContextPackService:
                     "task_type": row.get("task_type"),
                     "status": row.get("status"),
                 }
-                for row in tasks[:12]
+                for row in tasks[:8]
             ]
+
+        raw = json.dumps(compact, default=str)
+        if len(raw) > app_config.context_pack_max_json_chars:
+            compact["context_documents"] = compact_docs[: max(1, max_docs // 2)]
+            compact["truncated_for_budget"] = True
 
         if app_config.context_pack_include_change_history:
             changes = context_pack.get("recent_changes") or []

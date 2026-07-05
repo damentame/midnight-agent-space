@@ -179,10 +179,19 @@ class AppConfig:
     hermes_command: str = os.getenv("HERMES_COMMAND", "hermes")
     hermes_api_url: str = os.getenv("HERMES_API_URL", "")
     figma_access_token: str = _env("FIGMA_ACCESS_TOKEN", "FIGMA_API_TOKEN", default="")
-    context_pack_max_documents: int = _env_int("CONTEXT_PACK_MAX_DOCUMENTS", default=10)
-    context_pack_preview_chars: int = _env_int("CONTEXT_PACK_PREVIEW_CHARS", default=600)
-    context_pack_figma_preview_chars: int = _env_int("CONTEXT_PACK_FIGMA_PREVIEW_CHARS", default=4000)
-    context_pack_max_json_chars: int = _env_int("CONTEXT_PACK_MAX_JSON_CHARS", default=80000)
+    context_pack_max_documents: int = _env_int("CONTEXT_PACK_MAX_DOCUMENTS", default=8)
+    context_pack_task_max_documents: int = _env_int("CONTEXT_PACK_TASK_MAX_DOCUMENTS", default=4)
+    context_pack_preview_chars: int = _env_int("CONTEXT_PACK_PREVIEW_CHARS", default=480)
+    context_pack_figma_preview_chars: int = _env_int("CONTEXT_PACK_FIGMA_PREVIEW_CHARS", default=3000)
+    context_pack_max_json_chars: int = _env_int("CONTEXT_PACK_MAX_JSON_CHARS", default=48000)
+    context_pack_use_architecture_cache: bool = os.getenv(
+        "CONTEXT_PACK_USE_ARCHITECTURE_CACHE", "true"
+    ).lower() in ("1", "true", "yes")
+    token_budget_warn_on_task: bool = os.getenv("TOKEN_BUDGET_WARN_ON_TASK", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     context_pack_include_change_history: bool = os.getenv(
         "CONTEXT_PACK_INCLUDE_CHANGE_HISTORY", "false"
     ).lower() in ("1", "true", "yes")

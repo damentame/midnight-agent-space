@@ -199,6 +199,11 @@ export type ProjectSummary = {
     runtime_provider: string;
     created_at?: string | null;
     updated_at?: string | null;
+    token_usage?: {
+      totals?: { total_tokens?: number; cost_usd?: number; input_tokens?: number; output_tokens?: number };
+      efficiency?: { rating?: string; multiplier_to_commercial?: number };
+      by_model?: Array<{ model: string; total_tokens?: number; cost_usd?: number }>;
+    };
   } | null;
 };
 
@@ -404,6 +409,11 @@ export type ProjectProgress = {
   pending_tasks: ProgressTaskSummary[];
   risks: string[];
   generated_at: string;
+  token_usage?: {
+    totals?: { total_tokens?: number; cost_usd?: number };
+    efficiency?: { rating?: string; multiplier_to_commercial?: number };
+    by_model?: Array<{ model: string; total_tokens?: number; cost_usd?: number }>;
+  } | null;
 };
 
 export type QuickRunPlan = {
@@ -728,6 +738,20 @@ export const api = {
     }>(`/api/projects/${projectId}/preview/status`),
   projectProgress: (projectId: number) =>
     json<ProjectProgress>(`/api/projects/${projectId}/progress`),
+  projectTokenUsage: (projectId: number, limit = 20) =>
+    json<Record<string, unknown>>(`/api/projects/${projectId}/token-usage?limit=${limit}`),
+  runTokenUsage: (projectId: number, runId: number) =>
+    json<{ ok: boolean; token_usage: Record<string, unknown> }>(
+      `/api/projects/${projectId}/runs/${runId}/token-usage`,
+    ),
+  tokenTargets: () =>
+    json<{
+      ok: boolean;
+      app_equivalent_targets: Record<string, number>;
+      task_type_budgets: Record<string, [number, number]>;
+      commercial_target_tokens: number;
+      excellent_target_tokens: number;
+    }>("/api/token-targets"),
   promoteProjectToMain: (projectId: number) =>
     json<{ ok: boolean; from_branch?: string; to_branch?: string; commit_hash?: string; synced_worktree?: string | null }>(
       `/api/projects/${projectId}/promote-to-main`,

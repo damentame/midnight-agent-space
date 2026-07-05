@@ -141,6 +141,26 @@ class ProgressService:
 
         percent_complete = round(100 * total_completed / total_tasks) if total_tasks else 0
 
+        token_usage = None
+        if await schema_support.table_exists(db, "agent_run"):
+            latest = await db.fetch_one(
+                """
+                SELECT result_payload
+                FROM main.agent_run
+                WHERE project_id = $1
+                ORDER BY agent_run_id DESC
+                LIMIT 1
+                """,
+                project_id,
+            )
+            payload = (latest or {}).get("result_payload")
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError:
+                    payload = {}
+            token_usage = token_usage_service.run_usage_from_payload(payload if isinstance(payload, dict) else {})
+
         return {
             "percent_complete": percent_complete,
             "total_tasks": total_tasks,
@@ -151,6 +171,13 @@ class ProgressService:
             "pending_tasks": pending_tasks,
             "risks": risks,
             "generated_at": now.isoformat(),
+            "token_usage": {
+                "totals": (token_usage or {}).get("totals"),
+                "efficiency": (token_usage or {}).get("efficiency"),
+                "by_model": (token_usage or {}).get("by_model"),
+            }
+            if token_usage
+            else None,
         }
 
     def render_markdown(self, progress: Dict[str, Any]) -> str:

@@ -26,6 +26,7 @@ from ..services.task_execution_plan_service import (
     assign_milestones,
     build_execution_batches,
 )
+from ..services.token_usage_service import token_usage_service
 from ..services.verification_service import verification_service
 
 router = APIRouter()
@@ -454,6 +455,26 @@ async def batch_project_summaries(
                 pid,
             )
             latest_run = dict(latest) if latest else None
+            if latest_run and await schema_support.table_exists(db, "agent_run"):
+                full = await db.fetch_one(
+                    "SELECT result_payload FROM main.agent_run WHERE agent_run_id = $1",
+                    int(latest["agent_run_id"]),
+                )
+                payload = (full or {}).get("result_payload")
+                if isinstance(payload, str):
+                    import json as _json
+
+                    try:
+                        payload = _json.loads(payload)
+                    except _json.JSONDecodeError:
+                        payload = {}
+                usage = token_usage_service.run_usage_from_payload(payload if isinstance(payload, dict) else {})
+                if usage:
+                    latest_run["token_usage"] = {
+                        "totals": usage.get("totals"),
+                        "efficiency": usage.get("efficiency"),
+                        "by_model": (usage.get("by_model") or [])[:3],
+                    }
         summaries.append(
             {
                 "project": dict(project),

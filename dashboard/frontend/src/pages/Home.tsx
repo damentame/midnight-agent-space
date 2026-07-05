@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type AgentRun, type Project, type ProjectSummary } from "../api";
+import { formatCostUsd, formatTokenCount, extractTokenUsage } from "../lib/tokenUsage";
 
 export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -95,6 +96,9 @@ export default function Home() {
                       <p className="font-bold text-neutral-900">{project.project_name}</p>
                       <p className="text-xs text-neutral-600 mt-1">
                         {documentCount} documents / {summary?.counts.tasks ?? 0} tasks / {runCount} runs
+                        {summary?.latest_run?.token_usage?.totals?.total_tokens
+                          ? ` · ${formatTokenCount(summary.latest_run.token_usage.totals.total_tokens)} tokens (${formatCostUsd(summary.latest_run.token_usage.totals.cost_usd)})`
+                          : ""}
                       </p>
                     </div>
                     <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600">{nextLabel}</span>
@@ -109,7 +113,9 @@ export default function Home() {
         <div className="glass p-5 border-neutral-200">
           <h2 className="heading-sub mb-4">Recent execution visibility</h2>
           <div className="space-y-3">
-            {runs.slice(0, 6).map((run) => (
+            {runs.slice(0, 6).map((run) => {
+              const runUsage = extractTokenUsage(run.result_payload);
+              return (
               <Link
                 key={run.agent_run_id}
                 to={run.project_id ? `/projects/${run.project_id}/runs/${run.agent_run_id}` : "/projects"}
@@ -120,6 +126,9 @@ export default function Home() {
                     <p className="font-bold text-neutral-900">Run #{run.agent_run_id}</p>
                     <p className="text-xs text-neutral-600 mt-1">
                       project {run.project_id ?? "-"} / {run.runtime_provider ?? "runtime"} / {run.created_at ?? ""}
+                      {runUsage?.totals?.total_tokens
+                        ? ` · ${formatTokenCount(runUsage.totals.total_tokens)} tokens`
+                        : ""}
                     </p>
                   </div>
                   <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-600">
@@ -127,7 +136,8 @@ export default function Home() {
                   </span>
                 </div>
               </Link>
-            ))}
+            );
+            })}
             {!recentRun && <p className="text-sm text-neutral-600">No runs yet. Execute a project to create a monitorable run.</p>}
           </div>
         </div>

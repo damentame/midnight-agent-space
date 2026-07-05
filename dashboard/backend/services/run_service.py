@@ -40,6 +40,8 @@ from .model_routing_service import (
 from .review_check_service import review_check_service
 from .runtime_check_service import runtime_check_service
 from .schema_support import schema_support
+from .token_usage_service import token_usage_service
+from .project_context_cache_service import project_context_cache_service
 from .verification_service import verification_service
 
 logger = logging.getLogger(__name__)
@@ -287,6 +289,7 @@ class RunService:
             "fatal_cli": result.get("fatal_cli"),
             "stdout_tail": stdout_tail[-4:] if isinstance(stdout_tail, list) else [],
             "stderr_tail": stderr_tail[-4:] if isinstance(stderr_tail, list) else [],
+            "token_usage": result.get("token_usage"),
         }
 
     @classmethod
@@ -296,15 +299,27 @@ class RunService:
         per_task_results: List[Dict[str, Any]],
         all_ok: bool,
         selection_mode: str,
+        extra_records: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         safe_tasks = [cls._sanitize_cli_task_result(item) for item in per_task_results]
         summary = cls._sanitize_cli_task_result(per_task_results[-1] if per_task_results else {"ok": False})
-        return {
+        usage_records = [
+            item["token_usage"]
+            for item in per_task_results
+            if isinstance(item, dict) and isinstance(item.get("token_usage"), dict)
+        ]
+        if extra_records:
+            usage_records.extend(extra_records)
+        token_usage = token_usage_service.aggregate_records(usage_records) if usage_records else None
+        payload = {
             **summary,
             "ok": all_ok,
             "per_task_results": safe_tasks,
             "model_selection_mode": selection_mode,
         }
+        if token_usage:
+            payload["token_usage"] = token_usage
+        return payload
 
     @staticmethod
     def _resolve_run_artifact_dir(repo_path: str, run_id: int) -> Path:
@@ -647,6 +662,12 @@ class RunService:
             context_pack=execution_context_pack,
             context_staged=context_staged,
         )
+        context_chars = 0
+        if context_staged:
+            context_chars = 1200
+        elif execution_context_pack:
+            compact_ctx = context_pack_service.compact_for_prompt(execution_context_pack, task=task)
+            context_chars = len(json.dumps(compact_ctx, default=str))
         task_plan = await self._build_cli_plan(
             runtime_provider=task_provider,
             prompt=task_prompt,
@@ -686,6 +707,38 @@ class RunService:
                 plan=task_plan,
                 event_callback=on_event,
             )
+        usage_record = token_usage_service.build_task_usage_record(
+            task=task,
+            model=task_model,
+            runtime_provider=task_provider,
+            prompt=task_prompt,
+            cli_result=task_result,
+            context_chars=context_chars,
+        )
+        task_result["token_usage"] = usage_record
+        if app_config.token_budget_warn_on_task and usage_record.get("over_budget"):
+            await self.create_event(
+                db,
+                run_id=run_id,
+                project_id=project_id,
+                event_type="TOKEN_BUDGET_WARNING",
+                event_order=None,
+                payload={
+                    "task_id": task_id,
+                    "task_name": task.get("task_name"),
+                    "total_tokens": usage_record.get("total_tokens"),
+                    "budget_max": (usage_record.get("budget") or {}).get("max_tokens"),
+                    "message": "Task exceeded token budget target",
+                },
+            )
+        await self.create_event(
+            db,
+            run_id=run_id,
+            project_id=project_id,
+            event_type="TOKEN_USAGE",
+            event_order=None,
+            payload=usage_record,
+        )
         task_result["runtime_provider"] = task_provider
         task_result["task_id"] = task_id
         failure_detail = self._task_failure_detail(task_result)
@@ -864,15 +917,35 @@ class RunService:
             fixed_model=fixed_model,
             task={"task_type": "review", "task_name": "Design and quality review"},
         )
-        compact_context = context_pack_service.compact_for_prompt(context_pack)
+        compact_context = context_pack_service.compact_for_prompt(
+            context_pack,
+            task={"task_type": "review", "task_name": "Design and quality review"},
+        )
+        diff_only = context_pack_service.compact_diff_context(diff_summary)
+        compressed_tasks = []
+        for row in per_task_results:
+            if not isinstance(row, dict):
+                continue
+            usage = row.get("token_usage") if isinstance(row.get("token_usage"), dict) else {}
+            compressed_tasks.append(
+                {
+                    "task_id": row.get("task_id"),
+                    "ok": row.get("ok"),
+                    "error": row.get("error"),
+                    "elapsed_ms": row.get("elapsed_ms"),
+                    "total_tokens": usage.get("total_tokens"),
+                    "stdout_tail": token_usage_service.compress_log_lines(row.get("stdout_tail")),
+                    "stderr_tail": token_usage_service.compress_log_lines(row.get("stderr_tail")),
+                }
+            )
         review_prompt = (
             f"{template_text}\n\n"
             "You are reviewing an implementation pass that should match uploaded design context.\n"
             "Compare the built UI/code against Figma imports, staged files in .midnight/design/exports/, SVG/image assets, and text specs in the context pack.\n"
             "Flag any visual, layout, typography, or component mismatches. Recommend needs_changes when design fidelity is missing.\n\n"
             f"Context pack (compact):\n{json.dumps(compact_context, default=str)}\n\n"
-            f"Git diff summary:\n{json.dumps(diff_summary, default=str)}\n\n"
-            f"Per-task execution summary:\n{json.dumps(per_task_results, default=str)[:12000]}\n"
+            f"Git diff summary (changed files only):\n{json.dumps(diff_only, default=str)}\n\n"
+            f"Per-task execution summary:\n{json.dumps(compressed_tasks, default=str)}\n"
         )
         plan = await self._build_cli_plan(
             runtime_provider=reviewer_provider,
@@ -897,6 +970,15 @@ class RunService:
             plan=plan,
             event_callback=event_callback,
         )
+        review_usage = token_usage_service.build_task_usage_record(
+            task={"task_type": "review", "task_name": "Design and quality review"},
+            model=review_model,
+            runtime_provider=reviewer_provider,
+            prompt=review_prompt,
+            cli_result=result,
+            context_chars=len(json.dumps(compact_context, default=str)),
+        )
+        result["token_usage"] = review_usage
         await self.create_event(
             db,
             run_id=run_id,
@@ -1076,6 +1158,10 @@ class RunService:
                 "errors": [f"project {project_id} not found"],
                 "warnings": verification.warnings,
             }
+        try:
+            await project_context_cache_service.refresh_cache(db, project_id, context_pack)
+        except Exception:
+            logger.exception("failed to refresh architecture cache for project_id=%s", project_id)
 
         try:
             template_text = prompt_template_service.load_prompt_template(template_name)
@@ -2327,6 +2413,23 @@ class RunService:
                     plan=command_plan,
                     event_callback=on_event,
                 )
+                single_usage = token_usage_service.build_task_usage_record(
+                    task={"task_type": "execution", "task_name": "Quick run"},
+                    model=str(request_payload.get("model") or ""),
+                    runtime_provider=runtime_provider,
+                    prompt=command_plan.prompt,
+                    cli_result=execution_result,
+                    context_chars=len(json.dumps(context_pack_service.compact_for_prompt(execution_context_pack or {}), default=str)),
+                )
+                execution_result["token_usage"] = token_usage_service.aggregate_records([single_usage])
+                await self.create_event(
+                    db,
+                    run_id=run_id,
+                    project_id=project_id,
+                    event_type="TOKEN_USAGE",
+                    event_order=None,
+                    payload=single_usage,
+                )
             run_status = "COMPLETED" if execution_result.get("ok") else "FAILED"
 
             if not use_per_task:
@@ -2445,6 +2548,12 @@ class RunService:
                 )
                 if quality_review_result:
                     execution_result["quality_review_cli"] = quality_review_result
+                    review_usage = quality_review_result.get("token_usage")
+                    if isinstance(review_usage, dict):
+                        existing = execution_result.get("token_usage") if isinstance(execution_result.get("token_usage"), dict) else {}
+                        records = list(existing.get("task_records") or [])
+                        records.append(review_usage)
+                        execution_result["token_usage"] = token_usage_service.aggregate_records(records)
                     if not quality_review_result.get("ok"):
                         execution_result["ok"] = False
                         run_status = "FAILED"
@@ -2488,6 +2597,7 @@ class RunService:
                     metadata=feature_review,
                 )
                 artifact_count += 1 if row else 0
+            token_usage_summary = execution_result.get("token_usage") if isinstance(execution_result.get("token_usage"), dict) else None
             await self._update_run(
                 db,
                 run_id,
@@ -2498,6 +2608,7 @@ class RunService:
                     "review": review,
                     "git_changes": diff_summary,
                     "design_fidelity": design_fidelity_result,
+                    "token_usage": token_usage_summary,
                 },
                 finished=True,
             )
@@ -2512,6 +2623,10 @@ class RunService:
                     "error": execution_result.get("error"),
                     "exit_code": execution_result.get("exit_code"),
                     "timed_out": execution_result.get("timed_out"),
+                    "token_usage": token_usage_summary.get("totals") if token_usage_summary else None,
+                    "efficiency_rating": (token_usage_summary.get("efficiency") or {}).get("rating")
+                    if token_usage_summary
+                    else None,
                 },
             )
             await change_history_service.record_change(
